@@ -178,72 +178,40 @@ def status():
     click.echo(f"Total Days Logged: {total_days}")
 
 @click.command()
-@click.argument("project_name")
-def init(project_name):
-    """Initialize a new AutoDoc project"""
-    
-    base_path = project_name
+def init():
+    """Initialize AutoDoc in the current directory"""
 
-    folders = [
-        "terraform",
-        "src",
-        "scripts",
-        "logs",
-        "diagrams",
-        "docs",
-        "screenshots",
-        ".security"
-    ]
+    click.echo("Initializing AutoDoc in current directory...")
 
-    # Create project directory
-    os.makedirs(base_path, exist_ok=True)
+    # Create folders
+    os.makedirs("logs", exist_ok=True)
+    os.makedirs("screenshots", exist_ok=True)
+    os.makedirs(".autodoc", exist_ok=True)
+    os.makedirs(".autodoc/tests", exist_ok=True)
 
-    # Create subfolders
-    for folder in folders:
-        os.makedirs(os.path.join(base_path, folder), exist_ok=True)
+    # Create stats.json
+    stats_file = ".autodoc/stats.json"
+    if not os.path.exists(stats_file):
+        stats = {
+            "total_sessions": 0,
+            "days_logged": [],
+            "total_minutes": 0,
+            "last_session": "N/A"
+        }
+        with open(stats_file, "w") as f:
+            json.dump(stats, f, indent=4)
 
-    # Create README.md
-    readme_content = f"# {project_name}\n\nProject initialized with AutoDoc.\n"
-    with open(os.path.join(base_path, "README.md"), "w") as f:
-        f.write(readme_content)
+    # Create README
+    if not os.path.exists("README.md"):
+        with open("README.md", "w") as f:
+            f.write("# Project Dashboard\n\nInitialized with AutoDoc.\n")
 
-    # Create CHANGELOG.md
-    with open(os.path.join(base_path, "CHANGELOG.md"), "w") as f:
-        f.write("# Changelog\n\n")
+    # Create CHANGELOG
+    if not os.path.exists("CHANGELOG.md"):
+        with open("CHANGELOG.md", "w") as f:
+            f.write("# Changelog\n\n")
 
-    # Create .gitignore
-    gitignore_content = """
-# Security
-*.pem
-*.key
-*.p12
-*.pfx
-*.tfstate*
-*.tfvars
-*.env
-.aws/
-.azure/
-.gcp/
-secrets/
-.security/
-
-# Python
-__pycache__/
-*.pyc
-
-# macOS
-.DS_Store
-
-# Logs
-*.log
-"""
-    with open(os.path.join(base_path, ".gitignore"), "w") as f:
-        f.write(gitignore_content)
-
-    # Initialize git
-    os.system(f"cd {project_name} && git init")
-
-    click.echo(f"Project '{project_name}' initialized successfully.")
+    click.echo("AutoDoc initialized successfully.")
 
 def update_readme_dashboard():
     stats_file = ".autodoc/stats.json"
@@ -254,11 +222,11 @@ def update_readme_dashboard():
     with open(stats_file, "r") as f:
         stats = json.load(f)
 
-    total_sessions = stats["total_sessions"]
-    total_days = len(stats["days_logged"])
-    total_minutes = stats["total_minutes"]
+    total_sessions = stats.get("total_sessions", 0)
+    total_days = len(stats.get("days_logged", []))
+    total_minutes = stats.get("total_minutes", 0)
     total_hours = round(total_minutes / 60, 2)
-    last_session = stats["last_session"]
+    last_session = stats.get("last_session", "N/A")
 
     readme_content = f"""# Project Dashboard
 
@@ -289,7 +257,8 @@ def update_stats(date_str, duration_minutes=0):
         stats = {
             "total_sessions": 0,
             "days_logged": [],
-            "total_minutes": 0
+            "total_minutes": 0,
+            "last_session": "N/A"
         }
 
     stats["total_sessions"] += 1
@@ -689,7 +658,14 @@ def finish():
 ### Notes
 {notes}
 """
+    # Ensure logs folder exists
+    os.makedirs("logs", exist_ok=True)
 
+    log_filename = f"logs/{today}.md"
+
+    with open(log_filename, "w") as f:
+        f.write(log_content)
+    
     # Create or append log file
     if not os.path.exists(log_filename):
         with open(log_filename, "w") as f:
