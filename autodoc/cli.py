@@ -538,6 +538,20 @@ def doctor():
     else:
         click.echo("AutoDoc initialized: Missing (.autodoc folder)")
 
+        fix = click.confirm(
+            "Doctor can create the missing .autodoc folder. Apply correction?",
+            default=True
+        )
+
+        if fix:
+            os.makedirs(".autodoc", exist_ok=True)
+            click.echo("Correction applied: .autodoc folder created.")
+
+            if os.path.exists(".autodoc"):
+                click.echo("Verification: .autodoc folder is now OK.")
+            else:
+                click.echo("Verification failed: .autodoc folder is still missing.")
+
     # Check logs folder
     if os.path.exists("logs"):
         click.echo("Logs folder: OK")
