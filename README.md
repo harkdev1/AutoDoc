@@ -31,6 +31,7 @@ autodoc finish
 | Command | Purpose |
 |---------|----------|
 | `autodoc init <project>` | Initialize new project |
+| `autodoc test` | Runs a test protocol for functionality |
 | `autodoc start` | Start work session |
 | `autodoc finish` | End session & auto-document |
 | `autodoc status` | Show project stats |
