@@ -156,29 +156,26 @@ def version():
 
 @click.command()
 def status():
-    """Show project status"""
-    stats_file = ".autodoc/stats.json"
-
+    """Show AutoDoc status"""
+    
     click.echo("AutoDoc Status")
     click.echo(f"Version: {VERSION}")
 
-    if not os.path.exists(stats_file):
-        click.echo("No session data yet.")
-        return
+    stats_file = ".autodoc/stats.json"
 
-    with open(stats_file, "r") as f:
-        stats = json.load(f)
+    if os.path.exists(stats_file):
+        with open(stats_file, "r") as f:
+            stats = json.load(f)
+    else:
+        stats = {}
 
-    total_sessions = stats["total_sessions"]
-    total_days = len(stats["days_logged"])
-    total_minutes = stats["total_minutes"]
-    total_hours = round(total_minutes / 60, 2)
-    last_session = stats["last_session"]
+    total_minutes = stats.get("total_minutes", 0)
+    total_sessions = stats.get("total_sessions", 0)
+    total_days = stats.get("total_days", 0)
 
     click.echo(f"Total Sessions: {total_sessions}")
+    click.echo(f"Total Minutes: {total_minutes}")
     click.echo(f"Total Days Logged: {total_days}")
-    click.echo(f"Total Hours: {total_hours}")
-    click.echo(f"Last Session: {last_session}")
 
 @click.command()
 @click.argument("project_name")
