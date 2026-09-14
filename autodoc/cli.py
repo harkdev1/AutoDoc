@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 from google import genai
 from google.genai import types
+from PIL import ImageGrab
 
 VERSION = "0.1.0"
 
@@ -585,7 +586,8 @@ def screenshot_workflow():
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
         filename = f"screenshots/{timestamp}.png"
 
-        subprocess.run(["screencapture", filename])
+        screenshot = ImageGrab.grab()
+        screenshot.save(filename)
 
         click.echo(f"Screenshot saved: {filename}")
 
