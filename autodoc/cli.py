@@ -891,6 +891,41 @@ def self_test():
         click.echo("Self-test detected one or more failures.")
 
 @click.command()
+def demo():
+    """Run the AutoDoc guided showcase."""
+    click.echo("\n" + "=" * 60)
+    click.echo("AutoDoc v0.1 — GUIDED SHOWCASE")
+    click.echo("=" * 60)
+
+    steps = [
+        ("1", "SETUP", "Configure AutoDoc and its AI connection.", "autodoc setup"),
+        ("2", "DOCTOR", "Check project health and apply safe corrections.", "autodoc doctor"),
+        ("3", "SELF-TEST", "Verify Gemini, PowerShell, and screenshot capture.", "autodoc self-test"),
+        ("4", "START SESSION", "Create a focused engineering work session.", "autodoc start"),
+        ("5", "WORK / TEST", "Perform the technical task and investigate results.", "autodoc test"),
+        ("6", "EVIDENCE CAPTURE", "Capture visual evidence during the engineering session.", "Screenshot capture"),
+        ("7", "FINISH", "Generate documentation from rough engineering notes.", "autodoc finish"),
+        ("8", "AI PEER REVIEW", "Human reviews the generated documentation.", "Review AI output"),
+        ("9", "VERSION CONTROL", "Record the completed work in Git.", "Git commit"),
+        ("10", "FINAL STATUS", "Confirm the project is healthy and documented.", "autodoc status"),
+    ]
+
+    for number, title, description, command in steps:
+        click.echo("\n" + "-" * 60)
+        click.echo(f"STEP {number} — {title}")
+        click.echo("-" * 60)
+        click.echo(f"\n{description}")
+        click.echo(f"\nCOMMAND")
+        click.echo(f"> {command}")
+
+        if number != "10":
+            click.pause("\nPress Enter to continue...")
+
+    click.echo("\n" + "=" * 60)
+    click.echo("AI proposes. Human validates. AutoDoc records.")
+    click.echo("=" * 60)
+
+@click.command()
 def stats():
     """Show detailed AutoDoc stats"""
     stats_file = ".autodoc/stats.json"
@@ -924,6 +959,7 @@ cli.add_command(start)
 cli.add_command(finish)
 cli.add_command(stats)
 cli.add_command(setup)
+cli.add_command(demo)
 
 if __name__ == "__main__":
     cli()
