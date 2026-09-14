@@ -203,8 +203,11 @@ def init():
 
     # Create README
     if not os.path.exists("README.md"):
-        with open("README.md", "w") as f:
-            f.write("# Project Dashboard\n\nInitialized with AutoDoc.\n")
+        with open("README.md", "w", encoding="utf-8") as f:
+            f.write("# Project\n\nInitialized with AutoDoc.\n")
+
+    # Create dashboard directory
+    os.makedirs("docs", exist_ok=True)
 
     # Create CHANGELOG
     if not os.path.exists("CHANGELOG.md"):
@@ -241,7 +244,9 @@ See logs/ for detailed session logs.
 See CHANGELOG.md for project timeline.
 """
 
-    with open("README.md", "w") as f:
+    os.makedirs("docs", exist_ok=True)
+
+    with open("docs/dashboard.md", "w", encoding="utf-8") as f:
         f.write(readme_content)
 
 def update_stats(date_str, duration_minutes=0):
@@ -310,11 +315,11 @@ def log():
 
     # If log file doesn't exist, create header
     if not os.path.exists(log_filename):
-        with open(log_filename, "w") as f:
+        with open(log_filename, "w", encoding="utf-8") as f:
             f.write(f"# Engineering Log – {date_str}\n")
             f.write(session_entry)
     else:
-        with open(log_filename, "a") as f:
+        with open(log_filename, "a", encoding="utf-8") as f:
             f.write(session_entry)
 
     # Update CHANGELOG
