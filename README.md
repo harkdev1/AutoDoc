@@ -1,14 +1,42 @@
 # AutoDoc MVP
 
-**CLI-based documentation automation tool** for infrastructure projects.
+AutoDoc is a Python CLI tool designed to automatically document development work.
+It helps track sessions, generate logs, maintain changelogs, update README dashboards, and debug errors using AI.
 
-AutoDoc automates:
-- Session tracking
-- Documentation generation (via Google Gemini AI)
-- CHANGELOG management
-- README dashboard with stats
+# Purpose
+
+The objective is to develop an automated engineering journal that captures real-time technical progress. By programmatically logging terminal activity, system states, and visual snapshots, the tool generates a continuous record of infrastructure automation and cloud development. This ensures comprehensive documentation and traceability while allowing the engineer to remain focused on core execution. 
+
+# Why I Built This
+
+This tool is primarily designed for personal productivity and engineering documentation workflows.
+
+# AutoDoc automates:
+
+- Project initialization
+- Session tracking (start / finish)
+- Engineering log generation
+- README dashboard updates
+- CHANGELOG updates
+- Screenshot logging
 - Git automation
-- Screenshot capture
+- Project statistics tracking
+- Test runner for commands
+- AI error diagnosis
+- Project health check (doctor)
+
+# Installation
+
+Requires:
+
+- Python 3.10+
+- pipx (recommended)
+
+Install:
+
+git clone https://github.com/YOUR_USERNAME/autodoc.git
+cd autodoc
+pipx install .
 
 ## Quick Start
 
@@ -25,6 +53,28 @@ autodoc start
 # Finish session (auto-documents everything)
 autodoc finish
 ```
+
+# Example Workflow
+
+cd your-project
+autodoc init
+autodoc start
+# work on project (ex: 2 hours)
+autodoc finish
+git add .
+git commit -m "Project progress"
+git push
+
+AutoDoc will generate logs, upate README dashboards, maintain changelogs and track project statistics.
+
+# Project Structure Example
+
+project/
+├── .autodoc/
+├── logs/
+├── screenshots/
+├── README.md
+├── CHANGELOG.md
 
 ## Commands
 
@@ -74,3 +124,9 @@ This is a working CLI MVP. Next phases:
 - v0.2: Improve dashboard
 - v0.3: Advanced analytics
 - v0.4: VS Code extension
+
+# Disclaimer
+
+This tool is a personal developer productivity and documentation tool. It is not production software and is not optimized for commercial use.
+
+It is primarily intended for personal engineering workflows, documentation automation, and portfolio development.
