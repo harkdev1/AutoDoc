@@ -197,7 +197,7 @@ Notes:
 """
 
 def review_ai_output(ai_output):
-    """Allow the user to review and approve AI-generated content"""
+    """Allow the user to review and record AI-generated content"""
 
     click.echo("\n" + "=" * 50)
     click.echo("AI-GENERATED CONTENT")
@@ -216,7 +216,14 @@ def review_ai_output(ai_output):
         show_default=False
     )
 
-    return approved, reviewer_notes
+    review = {
+        "status": "approved" if approved else "rejected",
+        "reviewer": "human",
+        "reviewed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "notes": reviewer_notes
+    }
+
+    return review
 
 @click.group()
 def cli():
@@ -719,9 +726,9 @@ def finish():
     rough_notes = click.prompt("What did you work on? (rough notes)")
     ai_output = generate_ai_summary(rough_notes)
 
-    approved, reviewer_notes = review_ai_output(ai_output)
+    review = review_ai_output(ai_output)
 
-    if not approved:
+    if review["status"] == "rejected":
         click.echo("\nAI output rejected. Please revise the generated content before continuing.")
         return
 
@@ -748,8 +755,10 @@ def finish():
 {ai_output}
 
 ### AI Peer Review
-Status: Approved
-Reviewer Notes: {reviewer_notes}
+Status: {review["status"].title()}
+Reviewer: {review["reviewer"]}
+Reviewed At: {review["reviewed_at"]}
+Reviewer Notes: {review["notes"]}
 
 ### Duration
 {duration_minutes} minutes (Planned: {timeboxed_minutes} minutes)
