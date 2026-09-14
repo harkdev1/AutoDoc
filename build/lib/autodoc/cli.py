@@ -4,6 +4,7 @@ import click
 import subprocess
 import json
 import time
+import subprocess
 from pathlib import Path
 from google import genai
 from google.genai import types
@@ -133,7 +134,19 @@ Notes:
 
 @click.group()
 def cli():
-    """AutoDoc - Secure Project Scaffolding & Documentation CLI"""
+    """
+AutoDoc – Engineering Documentation & Session Tracking CLI
+
+Commands:
+  init     Initialize AutoDoc project
+  start    Start focus session
+  finish   Finish session and generate logs
+  log      Quick engineering log
+  stats    Show statistics
+  status   Show project status
+  test     Run test command and diagnose errors
+  version  Show AutoDoc version
+"""
     pass
 
 @click.command()
@@ -356,6 +369,62 @@ def log():
         click.echo("Git commit failed.")
 
     click.echo(f"Log updated: {log_filename}")
+
+@click.command()
+def test():
+    """Run a test command and analyze output"""
+    
+    click.echo("\n🧪 AutoDoc Test Runner\n")
+
+    command = click.prompt("Enter command to run")
+
+    click.echo(f"\nRunning: {command}\n")
+
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True
+        )
+
+        output = result.stdout
+        error = result.stderr
+
+        if output:
+            click.echo("Output:")
+            click.echo(output)
+
+        if error:
+            click.echo("\nError:")
+            click.echo(error)
+
+            # Send error to AI for diagnosis
+            click.echo("\nAnalyzing error with AI...\n")
+            diagnosis = generate_ai_summary(error)
+            click.echo("AI Diagnosis:")
+            click.echo(diagnosis)
+
+        # Save test log
+        if not os.path.exists(".autodoc/tests"):
+            os.makedirs(".autodoc/tests")
+
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        test_file = f".autodoc/tests/test_{timestamp}.md"
+
+        with open(test_file, "w") as f:
+            f.write(f"# AutoDoc Test Run – {timestamp}\n\n")
+            f.write(f"## Command\n{command}\n\n")
+            f.write("## Output\n")
+            f.write(output if output else "None\n")
+            f.write("\n## Error\n")
+            f.write(error if error else "None\n")
+
+        click.echo(f"\nTest log saved: {test_file}")
+
+    except Exception as e:
+        click.echo(f"Test failed: {e}")
+    
 
 @click.command()
 def start():
@@ -591,6 +660,7 @@ cli.add_command(version)
 cli.add_command(status)
 cli.add_command(init)
 cli.add_command(log)
+cli.add_command(test)
 cli.add_command(start)
 cli.add_command(finish)
 cli.add_command(stats)

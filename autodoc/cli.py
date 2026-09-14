@@ -134,7 +134,19 @@ Notes:
 
 @click.group()
 def cli():
-    """AutoDoc - Secure Project Scaffolding & Documentation CLI"""
+    """
+AutoDoc – Engineering Documentation & Session Tracking CLI
+
+Commands:
+  init     Initialize AutoDoc project
+  start    Start focus session
+  finish   Finish session and generate logs
+  log      Quick engineering log
+  stats    Show statistics
+  status   Show project status
+  test     Run test command and diagnose errors
+  version  Show AutoDoc version
+"""
     pass
 
 @click.command()
@@ -389,7 +401,7 @@ def test():
 
             # Send error to AI for diagnosis
             click.echo("\nAnalyzing error with AI...\n")
-            diagnosis = generate_ai_summary(error)
+            diagnosis = diagnose_error(error)
             click.echo("AI Diagnosis:")
             click.echo(diagnosis)
 
@@ -403,16 +415,113 @@ def test():
         with open(test_file, "w") as f:
             f.write(f"# AutoDoc Test Run – {timestamp}\n\n")
             f.write(f"## Command\n{command}\n\n")
+
             f.write("## Output\n")
             f.write(output if output else "None\n")
+
             f.write("\n## Error\n")
             f.write(error if error else "None\n")
+
+            if error:
+                f.write("\n## AI Diagnosis\n")
+                f.write(diagnosis)
 
         click.echo(f"\nTest log saved: {test_file}")
 
     except Exception as e:
         click.echo(f"Test failed: {e}")
     
+def diagnose_error(error_text):
+    """Use AI to diagnose terminal errors"""
+    try:
+        api_key = get_api_key()
+        if not api_key:
+            return "No API key configured for AI diagnosis."
+
+        client = genai.Client(api_key=api_key)
+
+        prompt = f"""
+You are a senior DevOps engineer.
+
+Analyze the following terminal error and explain:
+
+1. What caused the error
+2. How to fix it
+3. What to check next
+4. Example command to fix it (if applicable)
+
+Error:
+{error_text}
+"""
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+
+        return response.text
+
+    except Exception as e:
+        return f"AI diagnosis failed: {e}"
+
+@click.command()
+def doctor():
+    """Check AutoDoc project health"""
+
+    click.echo("\n🩺 AutoDoc Doctor Report")
+    click.echo("-" * 40)
+
+    # Check AutoDoc folder
+    if os.path.exists(".autodoc"):
+        click.echo("AutoDoc initialized: OK")
+    else:
+        click.echo("AutoDoc initialized: Missing (.autodoc folder)")
+
+    # Check logs folder
+    if os.path.exists("logs"):
+        click.echo("Logs folder: OK")
+    else:
+        click.echo("Logs folder: Missing")
+
+    # Check README
+    if os.path.exists("README.md"):
+        click.echo("README.md: OK")
+    else:
+        click.echo("README.md: Missing")
+
+    # Check CHANGELOG
+    if os.path.exists("CHANGELOG.md"):
+        click.echo("CHANGELOG.md: OK")
+    else:
+        click.echo("CHANGELOG.md: Missing")
+
+    # Check Git repo
+    if os.path.exists(".git"):
+        click.echo("Git repository: OK")
+    else:
+        click.echo("Git repository: Not initialized")
+
+    # Check stats file
+    if os.path.exists(".autodoc/stats.json"):
+        click.echo("Stats file: OK")
+    else:
+        click.echo("Stats file: Missing")
+
+    # Check Gemini API
+    api_key = get_api_key()
+    if api_key:
+        click.echo("Gemini API: OK")
+    else:
+        click.echo("Gemini API: Not configured")
+
+    # Check active session
+    if os.path.exists(".autodoc/session.json"):
+        click.echo("Active session: Yes")
+    else:
+        click.echo("Active session: No")
+
+    click.echo("-" * 40)
+    click.echo("Doctor check complete.\n")
 
 @click.command()
 def start():
@@ -649,6 +758,7 @@ cli.add_command(status)
 cli.add_command(init)
 cli.add_command(log)
 cli.add_command(test)
+cli.add_command(doctor)
 cli.add_command(start)
 cli.add_command(finish)
 cli.add_command(stats)
