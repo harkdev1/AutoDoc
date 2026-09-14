@@ -1,0 +1,10 @@
+README.md
+setup.py
+autodoc/__init__.py
+autodoc/cli.py
+autodoc.egg-info/PKG-INFO
+autodoc.egg-info/SOURCES.txt
+autodoc.egg-info/dependency_links.txt
+autodoc.egg-info/entry_points.txt
+autodoc.egg-info/requires.txt
+autodoc.egg-info/top_level.txt
