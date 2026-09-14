@@ -658,21 +658,17 @@ def finish():
 ### Notes
 {notes}
 """
+
     # Ensure logs folder exists
     os.makedirs("logs", exist_ok=True)
 
-    log_filename = f"logs/{today}.md"
-
-    with open(log_filename, "w") as f:
-        f.write(log_content)
-    
     # Create or append log file
     if not os.path.exists(log_filename):
-        with open(log_filename, "w") as f:
+        with open(log_filename, "w", encoding="utf-8") as f:
             f.write(f"# Engineering Log – {date_str}\n")
             f.write(session_entry)
     else:
-        with open(log_filename, "a") as f:
+        with open(log_filename, "a", encoding="utf-8") as f:
             f.write(session_entry)
 
     # Update CHANGELOG
