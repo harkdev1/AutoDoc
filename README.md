@@ -87,6 +87,12 @@ Update Logs / Stats / Changelog
 Git Commit
 ```
 
+## AI Governance
+
+AutoDoc treats AI-generated content as a draft, not authoritative documentation.
+
+AI proposes → Human validates → AutoDoc records
+
 ## Commands
 
 ```text
