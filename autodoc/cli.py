@@ -22,25 +22,43 @@ def estimate_session_time(goal):
         client = genai.Client(api_key=api_key)
 
         prompt = f"""
-You are a project estimation expert. Based on the following goal, provide a realistic time estimate.
+You are the session planning assistant for AutoDoc, an engineering
+focus-session and documentation tool.
 
-Goal: {goal}
+Your job is to estimate how long ONE focused work session should take
+for the following goal.
 
-Respond with ONLY a number representing minutes (30-480 minutes / 0.5-8 hours). 
-For example: "90" or "45" or "120"
+Goal:
+{goal}
 
-Consider:
-- Complexity of the task
-- Testing and validation time
-- Documentation time
-- Buffer for unexpected issues (add 20%)
+Rules:
+- A single focus session must be between 30 and 240 minutes.
+- NEVER estimate more than 240 minutes.
+- Prefer focused sessions of 45-120 minutes when practical.
+- If the goal is too large to reasonably complete in one focused session,
+  estimate the time for the FIRST meaningful chunk of work rather than
+  estimating the entire project.
+- When a goal is too large, recommend splitting it across multiple
+  sessions.
+- Include reasonable time for testing and validation.
+- Do not include long-term project planning, future sessions, or unrelated
+  work in the estimate.
+- Be realistic rather than optimistic.
 
-Be realistic, not optimistic."""
+Return ONLY the estimated number of minutes for the recommended session.
+Do not include words, explanations, ranges, or units.
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
+Examples:
+45
+60
+90
+120
+180
+240
+"""
+
+        chat = client.chats.create(model="gemini-2.5-flash")
+        response = chat.send_message(prompt)
 
         # Extract just the number from response
         minutes_str = response.text.strip()
@@ -73,6 +91,53 @@ def get_api_key():
     
     return None
 
+@click.command()
+def setup():
+    """Configure AutoDoc for first use"""
+
+    click.echo("\nAutoDoc Setup\n")
+    click.echo("Configure your Gemini API connection.\n")
+
+    api_key = click.prompt(
+        "Gemini API Key",
+        hide_input=True
+    )
+
+    if not api_key.strip():
+        click.echo("Setup cancelled: API key cannot be empty.")
+        return
+
+    click.echo("\nValidating Gemini API...")
+
+    try:
+        client = genai.Client(api_key=api_key.strip())
+        chat = client.chats.create(model="gemini-2.5-flash")
+        response = chat.send_message("Reply with exactly: PASS")
+
+        if "PASS" not in response.text.upper():
+            click.echo("API validation failed.")
+            return
+
+    except Exception as e:
+        click.echo(f"API validation failed: {e}")
+        return
+
+    config_dir = Path.home() / ".autodoc"
+    config_dir.mkdir(exist_ok=True)
+
+    config_file = config_dir / "config.json"
+
+    with open(config_file, "w") as f:
+        json.dump(
+            {"gemini_api_key": api_key.strip()},
+            f,
+            indent=2
+        )
+
+    click.echo("✓ Gemini API validated")
+    click.echo("✓ Configuration saved")
+    click.echo("\nAutoDoc is ready.\n")
+
 def generate_ai_summary(notes):
     try:
         api_key = get_api_key()
@@ -99,10 +164,8 @@ Rough Notes:
 {notes}
 """
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
+        chat = client.chats.create(model="gemini-2.5-flash")
+        response = chat.send_message(prompt)
 
         return response.text
 
@@ -132,6 +195,28 @@ Next Steps:
 Notes:
 {notes_extra}
 """
+
+def review_ai_output(ai_output):
+    """Allow the user to review and approve AI-generated content"""
+
+    click.echo("\n" + "=" * 50)
+    click.echo("AI-GENERATED CONTENT")
+    click.echo("=" * 50)
+    click.echo(ai_output)
+    click.echo("=" * 50)
+
+    approved = click.confirm(
+        "\nApprove this AI-generated content?",
+        default=True
+    )
+
+    reviewer_notes = click.prompt(
+        "Reviewer notes",
+        default="",
+        show_default=False
+    )
+
+    return approved, reviewer_notes
 
 @click.group()
 def cli():
@@ -354,11 +439,10 @@ def test():
 
     try:
         result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True
-        )
+        ["powershell.exe", "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True
+    )
 
         output = result.stdout
         error = result.stderr
@@ -426,10 +510,8 @@ Error:
 {error_text}
 """
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
+        chat = client.chats.create(model="gemini-2.5-flash")
+        response = chat.send_message(prompt)
 
         return response.text
 
@@ -637,6 +719,12 @@ def finish():
     rough_notes = click.prompt("What did you work on? (rough notes)")
     ai_output = generate_ai_summary(rough_notes)
 
+    approved, reviewer_notes = review_ai_output(ai_output)
+
+    if not approved:
+        click.echo("\nAI output rejected. Please revise the generated content before continuing.")
+        return
+
     notes = click.prompt("Extra notes", default="", show_default=False)
     where_left_off = click.prompt("Where did you leave off? (one sentence for next session)", default="", show_default=False)
 
@@ -658,6 +746,10 @@ def finish():
 
 ## Session – {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}{goal_section}{def_of_done_section}{achieved_section}
 {ai_output}
+
+### AI Peer Review
+Status: Approved
+Reviewer Notes: {reviewer_notes}
 
 ### Duration
 {duration_minutes} minutes (Planned: {timeboxed_minutes} minutes)
@@ -707,6 +799,75 @@ def finish():
     click.echo("\n✅ Session logged successfully. Handover note saved.")
 
 @click.command()
+def self_test():
+    """Run a quick AutoDoc health and integration test"""
+
+    click.echo("\n🧪 AutoDoc Self-Test\n")
+
+    checks = []
+
+    # 1. Project initialization
+    initialized = os.path.exists(".autodoc")
+    checks.append(("AutoDoc initialized", initialized))
+
+    # 2. Gemini API
+    api_key = get_api_key()
+    gemini_ok = bool(api_key)
+
+    if gemini_ok:
+        try:
+            client = genai.Client(api_key=api_key)
+            click.echo("Testing Gemini...")
+            chat = client.chats.create(model="gemini-2.5-flash")
+            click.echo("Sending Gemini test...")
+            response = chat.send_message("Reply with exactly: PASS")
+            gemini_ok = "PASS" in response.text.upper()
+        except Exception:
+            gemini_ok = False
+
+    checks.append(("Gemini API", gemini_ok))
+
+    # 3. PowerShell execution
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", "Write-Output 'PASS'"],
+            capture_output=True,
+            text=True
+        )
+        powershell_ok = result.returncode == 0 and "PASS" in result.stdout
+    except Exception:
+        powershell_ok = False
+
+    checks.append(("PowerShell execution", powershell_ok))
+
+    # 4. Screenshot capture
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        test_screenshot = f"screenshots/self_test_{timestamp}.png"
+
+        screenshot = ImageGrab.grab()
+        screenshot.save(test_screenshot)
+
+        screenshot_ok = os.path.exists(test_screenshot)
+    except Exception:
+        screenshot_ok = False
+
+    checks.append(("Screenshot capture", screenshot_ok))
+
+    click.echo("-" * 40)
+
+    for name, passed in checks:
+        status = "PASS" if passed else "FAIL"
+        click.echo(f"{status}: {name}")
+
+    click.echo("-" * 40)
+
+    if all(passed for _, passed in checks):
+        click.echo("Self-test completed successfully.")
+    else:
+        click.echo("Self-test detected one or more failures.")
+
+@click.command()
 def stats():
     """Show detailed AutoDoc stats"""
     stats_file = ".autodoc/stats.json"
@@ -734,10 +895,12 @@ cli.add_command(status)
 cli.add_command(init)
 cli.add_command(log)
 cli.add_command(test)
+cli.add_command(self_test)
 cli.add_command(doctor)
 cli.add_command(start)
 cli.add_command(finish)
 cli.add_command(stats)
+cli.add_command(setup)
 
 if __name__ == "__main__":
     cli()
