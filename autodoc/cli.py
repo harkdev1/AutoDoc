@@ -665,7 +665,9 @@ def start():
     click.echo("\n📵 Notifications off. Deep work begins now.")
     click.echo("═" * 50 + "\n")
 
-def screenshot_workflow():
+@click.command()
+def screenshot():
+    """Capture screenshots as project evidence."""
     if not os.path.exists("screenshots"):
         os.makedirs("screenshots")
 
@@ -681,7 +683,6 @@ def screenshot_workflow():
             click.echo("Screenshot cancelled.")
             break
 
-        # Countdown
         for i in range(5, 0, -1):
             click.echo(f"{i}...")
             time.sleep(1)
@@ -689,8 +690,8 @@ def screenshot_workflow():
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
         filename = f"screenshots/{timestamp}.png"
 
-        screenshot = ImageGrab.grab()
-        screenshot.save(filename)
+        screenshot_image = ImageGrab.grab()
+        screenshot_image.save(filename)
 
         click.echo(f"Screenshot saved: {filename}")
 
@@ -802,7 +803,7 @@ Reviewer Notes: {review["notes"]}
     update_readme_dashboard()
 
     # Screenshot workflow
-    screenshot_workflow()
+    screenshot()
 
     # Git automation
     try:
@@ -960,6 +961,7 @@ cli.add_command(finish)
 cli.add_command(stats)
 cli.add_command(setup)
 cli.add_command(demo)
+cli.add_command(screenshot)
 
 if __name__ == "__main__":
     cli()
