@@ -667,7 +667,7 @@ def start():
 
 @click.command()
 def screenshot():
-    """Capture screenshots as project evidence."""
+    """Capture a named screenshot as project evidence."""
     if not os.path.exists("screenshots"):
         os.makedirs("screenshots")
 
@@ -676,6 +676,24 @@ def screenshot():
 
         if choice.lower() != "y":
             break
+
+        screenshot_name = click.prompt(
+            "Screenshot name (e.g., suspicious-powershell-event)"
+        ).strip()
+
+        if not screenshot_name:
+            click.echo("Screenshot name cannot be empty.")
+            continue
+
+        safe_name = "".join(
+            character if character.isalnum() or character in "-_"
+            else "-"
+            for character in screenshot_name
+        ).strip("-")
+
+        if not safe_name:
+            click.echo("Invalid screenshot name.")
+            continue
 
         ready = click.prompt("Prepare screen. Type 1 when ready")
 
@@ -687,8 +705,16 @@ def screenshot():
             click.echo(f"{i}...")
             time.sleep(1)
 
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        filename = f"screenshots/{timestamp}.png"
+        filename = f"screenshots/{safe_name}.png"
+
+        if os.path.exists(filename):
+            overwrite = click.confirm(
+                f"{filename} already exists. Overwrite?"
+            )
+
+            if not overwrite:
+                click.echo("Screenshot cancelled.")
+                continue
 
         screenshot_image = ImageGrab.grab()
         screenshot_image.save(filename)
@@ -696,6 +722,7 @@ def screenshot():
         click.echo(f"Screenshot saved: {filename}")
 
         another = click.prompt("Take another screenshot? (y/n)")
+
         if another.lower() != "y":
             break
 
