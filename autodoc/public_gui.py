@@ -14,8 +14,8 @@ from tkinter import messagebox, ttk
 from tkinter import filedialog
 
 try:
-    from . import public_cli
-    from .public_vibe import VibeCoder
+    from autodoc import public_cli
+    from autodoc.public_vibe import VibeCoder
 except ImportError:
     import public_cli
     from public_vibe import VibeCoder

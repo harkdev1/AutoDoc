@@ -15,7 +15,7 @@ if (-not $pyInstaller) {
 
 Push-Location $repositoryRoot
 try {
-    & $pyInstaller.Source --onefile --clean --name AutoDoc-Public $entryPoint
+    & $pyInstaller.Source --onefile --noconsole --clean --name AutoDoc-Public $entryPoint
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed with exit code $LASTEXITCODE"
     }
