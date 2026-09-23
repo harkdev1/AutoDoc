@@ -8,10 +8,12 @@ setup(
     install_requires=[
         "click",
         "google-genai",
+        "Pillow",
     ],
     entry_points={
         "console_scripts": [
             "autodoc=autodoc.cli:cli",
+            "autodoc-public=autodoc.public_cli:cli",
         ],
     },
 )

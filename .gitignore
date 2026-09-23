@@ -7,6 +7,10 @@ venv/
 .env
 config.json
 .autodoc/
+.autodoc-public/
+dist/
+build/
+*.spec
 
 # macOS
 .DS_Store

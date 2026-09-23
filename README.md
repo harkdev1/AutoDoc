@@ -141,3 +141,18 @@ The current focus is making the existing CLI workflow reliable, presentable, and
 Potential future development includes a more convenient interface, multi-project management, and additional AI-assisted workflows.
 
 The CLI remains the core application and workflow engine.
+
+## Public Edition
+
+AutoDoc Public Edition is a local-first distribution target for experimentation.
+It uses a separate `.autodoc-public/` state directory and does not require a
+Gemini API key. It never stages files automatically; Git commits require files
+to be staged explicitly first.
+
+Run it from a checkout with:
+
+```powershell
+python .\autodoc\public_cli.py --help
+```
+
+See [docs/public-edition.md](docs/public-edition.md) for packaging instructions.
