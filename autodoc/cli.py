@@ -4,6 +4,7 @@ import os
 import click
 import subprocess
 import json
+import re
 import sys
 import time
 import subprocess
@@ -160,6 +161,25 @@ def monitor_worker(interval):
     MONITOR_STATE_FILE.unlink(missing_ok=True)
 
 
+def launch_monitor_worker(interval):
+    MONITOR_STATE_FILE.parent.mkdir(exist_ok=True)
+    MONITOR_STOP_FILE.unlink(missing_ok=True)
+    MONITOR_STATE_FILE.write_text(
+        json.dumps({"started_at": datetime.now().isoformat(timespec="seconds"), "interval": interval}),
+        encoding="utf-8",
+    )
+    log_path = MONITOR_STATE_FILE.with_suffix(".log")
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+    subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "monitor", "worker", "--interval", str(interval)],
+        stdin=subprocess.DEVNULL,
+        stdout=log_path.open("a", encoding="utf-8"),
+        stderr=subprocess.STDOUT,
+        creationflags=creation_flags,
+        close_fds=True,
+    )
+
+
 @click.group()
 def monitor():
     """Capture optional, local-only activity snapshots during focused work."""
@@ -177,22 +197,7 @@ def monitor_start(interval):
         "Only one contact sheet is saved when stopped; no video is saved. Continue?",
         abort=True,
     )
-    MONITOR_STATE_FILE.parent.mkdir(exist_ok=True)
-    MONITOR_STOP_FILE.unlink(missing_ok=True)
-    MONITOR_STATE_FILE.write_text(
-        json.dumps({"started_at": datetime.now().isoformat(timespec="seconds"), "interval": interval}),
-        encoding="utf-8",
-    )
-    log_path = MONITOR_STATE_FILE.with_suffix(".log")
-    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
-    subprocess.Popen(
-        [sys.executable, str(Path(__file__).resolve()), "monitor", "worker", "--interval", str(interval)],
-        stdin=subprocess.DEVNULL,
-        stdout=log_path.open("a", encoding="utf-8"),
-        stderr=subprocess.STDOUT,
-        creationflags=creation_flags,
-        close_fds=True,
-    )
+    launch_monitor_worker(interval)
     click.echo(f"Passive screen capture started (every {interval}s). Stop with: autodoc monitor stop")
 
 
@@ -846,6 +851,10 @@ def start():
     # Use AI estimate as default, or 90 minutes if no goal
     default_time = estimated_minutes if estimated_minutes else 90
     timeboxing = click.prompt(f"\nTimeboxing duration (minutes) [suggested: {default_time}]", type=int, default=default_time, show_default=False)
+    passive_capture = click.confirm(
+        "Enable passive screen snapshots while you work? (no video saved)",
+        default=False,
+    )
 
     start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -855,11 +864,17 @@ def start():
         "definition_of_done": definition_of_done,
         "dependencies": dependencies,
         "tech_context": tech_context,
-        "timeboxing_minutes": timeboxing
+        "timeboxing_minutes": timeboxing,
+        "passive_capture": passive_capture,
+        "passive_interval": 30,
+        "paused_seconds": 0,
     }
 
     with open(session_file, "w") as f:
         json.dump(session_data, f, indent=2)
+
+    if passive_capture:
+        launch_monitor_worker(30)
 
     click.echo("\n" + "═" * 50)
     click.echo(f"✅ FOCUS MODE ACTIVATED")
@@ -868,6 +883,36 @@ def start():
         click.echo(f"🎯 Goal: {goal[:50]}{'...' if len(goal) > 50 else ''}")
     click.echo("\n📵 Notifications off. Deep work begins now.")
     click.echo("═" * 50 + "\n")
+
+
+@click.command()
+def pause():
+    """Pause or resume the active focus session and passive capture."""
+    session_file = ".autodoc/session.json"
+    if not os.path.exists(session_file):
+        click.echo("No active session.")
+        return
+
+    with open(session_file, "r") as f:
+        session = json.load(f)
+
+    now = datetime.now()
+    if session.get("paused_at"):
+        paused_at = datetime.strptime(session["paused_at"], "%Y-%m-%d %H:%M:%S")
+        session["paused_seconds"] = session.get("paused_seconds", 0) + int((now - paused_at).total_seconds())
+        session.pop("paused_at", None)
+        if session.get("passive_capture"):
+            launch_monitor_worker(session.get("passive_interval", 30))
+        message = "Session resumed."
+    else:
+        session["paused_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
+        if MONITOR_STATE_FILE.exists():
+            MONITOR_STOP_FILE.write_text("pause", encoding="utf-8")
+        message = "Session paused."
+
+    with open(session_file, "w") as f:
+        json.dump(session, f, indent=2)
+    click.echo(message)
 
 @click.command()
 def screenshot_workflow():
@@ -929,6 +974,39 @@ def screenshot_workflow():
         if another.lower() != "y":
             break
 
+
+def capture_manual_screenshot(description):
+    now = datetime.now()
+    safe_description = re.sub(r"[^a-z0-9]+", "-", description.lower()).strip("-")[:48]
+    filename = f"{now.strftime('%Y-%m-%d_%H%M%S')}_{safe_description or 'screen'}.png"
+    screenshot_path = Path("screenshots") / filename
+    log_filename = Path("logs") / f"{now.strftime('%Y-%m-%d')}.md"
+    Path("screenshots").mkdir(exist_ok=True)
+    Path("logs").mkdir(exist_ok=True)
+    screenshot = ImageGrab.grab()
+    screenshot.save(screenshot_path)
+    if not log_filename.exists():
+        log_filename.write_text(f"# Engineering Log – {now.strftime('%Y-%m-%d')}\n", encoding="utf-8")
+    markdown_path = f"../screenshots/{filename}"
+    with log_filename.open("a", encoding="utf-8") as log_file:
+        log_file.write(
+            f"\n## Screenshot – {description}\n"
+            f"![{description}]({markdown_path})\n"
+        )
+    return screenshot_path
+
+
+@click.command(name="screenshot")
+def screenshot_command():
+    """Capture one named screenshot and add it to today's Markdown log."""
+    description = click.prompt("What should this screenshot show?", default="work in progress", show_default=True)
+    try:
+        screenshot_path = capture_manual_screenshot(description)
+        click.echo(f"Screenshot saved: {screenshot_path}")
+        click.echo("Added to today's Markdown log.")
+    except Exception as error:
+        raise click.ClickException(f"Screenshot capture failed: {error}") from error
+
 @click.command()
 def finish():
     """Finish AutoDoc session and log work"""
@@ -945,8 +1023,17 @@ def finish():
     start_time = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
     end_time = datetime.now()
 
+    if session.get("paused_at"):
+        paused_at = datetime.strptime(session["paused_at"], "%Y-%m-%d %H:%M:%S")
+        session["paused_seconds"] = session.get("paused_seconds", 0) + int((end_time - paused_at).total_seconds())
+        session.pop("paused_at", None)
+
+    if session.get("passive_capture") and MONITOR_STATE_FILE.exists():
+        MONITOR_STOP_FILE.write_text("finish", encoding="utf-8")
+
     duration = end_time - start_time
-    duration_minutes = int(duration.total_seconds() / 60)
+    active_seconds = max(0, int(duration.total_seconds()) - session.get("paused_seconds", 0))
+    duration_minutes = int(active_seconds / 60)
 
     # Display goal and achievement (only if goal was set)
     click.echo("\n📊 Session Review\n")
@@ -969,7 +1056,16 @@ def finish():
 
     # Ask for rough notes instead of full summary
     rough_notes = click.prompt("What did you work on? (rough notes)")
-    ai_output = generate_ai_summary(rough_notes)
+    struggles = click.prompt("What slowed you down or felt difficult?", default="None", show_default=False)
+    ai_missed = click.prompt("What did the AI miss or get wrong?", default="None", show_default=False)
+    story_context = click.prompt("What should the story of this work emphasize?", default="None", show_default=False)
+    story_notes = (
+        f"Work completed:\n{rough_notes}\n\n"
+        f"Struggles:\n{struggles}\n\n"
+        f"AI missed or got wrong:\n{ai_missed}\n\n"
+        f"Story emphasis:\n{story_context}"
+    )
+    ai_output = generate_ai_summary(story_notes)
 
     review = review_ai_output(ai_output)
 
@@ -998,6 +1094,15 @@ def finish():
 
 ## Session – {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}{goal_section}{def_of_done_section}{achieved_section}
 {ai_output}
+
+### Working Story
+{story_context}
+
+### Friction and AI Gaps
+{struggles}
+
+### What the AI Missed
+{ai_missed}
 
 ### AI Peer Review
 Status: {review["status"].title()}
@@ -1031,9 +1136,6 @@ Reviewer Notes: {review["notes"]}
     # Update stats + README
     update_stats(date_str, duration_minutes)
     update_readme_dashboard()
-
-    # Screenshot workflow
-    screenshot_workflow.callback()
 
     # Git automation
     try:
@@ -1187,11 +1289,13 @@ cli.add_command(test)
 cli.add_command(self_test)
 cli.add_command(doctor)
 cli.add_command(start)
+cli.add_command(pause)
 cli.add_command(finish)
 cli.add_command(stats)
 cli.add_command(setup)
 cli.add_command(demo)
 cli.add_command(screenshot_workflow)
+cli.add_command(screenshot_command)
 cli.add_command(propose)
 cli.add_command(monitor)
 

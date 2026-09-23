@@ -108,6 +108,24 @@ autodoc version   Show AutoDoc version
 autodoc monitor   Capture optional activity snapshots during work
 ```
 
+### Simple Session Rhythm
+
+For a new project, the shortest workflow is:
+
+```powershell
+autodoc init
+autodoc start
+autodoc pause
+autodoc screenshot
+autodoc finish
+```
+
+During a session, `pause` toggles pause/resume, `screenshot` asks for a short
+description and names the image automatically, and `finish` guides you through
+what happened, what was difficult, what the AI missed, and what story the work
+should tell. Gemini assists with the final summary; human approval remains
+required.
+
 ### Passive Activity Capture
 
 AutoDoc can optionally capture low-resolution screen snapshots while you work:
