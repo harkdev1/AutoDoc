@@ -7,6 +7,95 @@ the shared local storage helpers at `../autodoc/public_cli.py`.
 It does not use the developer CLI, does not require a Gemini API key, and does not
 touch `.autodoc/` state or perform automatic Git staging.
 
+## Download
+
+Windows users can download the latest app here:
+
+[Download AutoDoc-Public.exe](https://github.com/harkdev1/AutoDoc-Public-Edition/releases/latest)
+
+Download the `.exe`, place it somewhere you can find it, and double-click it.
+No Python installation is required for the executable release.
+
+## First Launch
+
+AutoDoc opens with a short welcome screen. Nothing is required to start:
+
+1. Choose whether to connect GitHub now or later.
+2. Choose Gemini, no AI, or another provider later.
+3. Select **Start locally**.
+4. Choose a project folder when prompted.
+
+Your local records are stored in that project folder under `.autodoc-public/`.
+Your existing developer AutoDoc state is not used.
+
+## What Each Area Does
+
+- **Dashboard**: See sessions, minutes, days logged, and the current project.
+- **Session**: Start a timer-based work session and finish it into a Markdown log.
+- **Manual Log**: Record one piece of work without starting a session or timer.
+- **Logs**: Read every local Markdown log inside the app.
+- **Vibe Code**: Ask Gemini for a proposed feature, review the files, and apply only approved changes.
+- **Settings**: Configure Gemini, GitHub, and manual update checks.
+
+## Manual Log
+
+Use **Manual Log** when the work already happened or was done outside AutoDoc.
+Enter a date, optional times, a title, and your notes. Gemini can summarize the
+notes, but you edit and approve the result before it is saved.
+
+## Sessions
+
+Use **Session** when you want a live timer:
+
+1. Enter a goal and definition of done.
+2. Choose a planned duration.
+3. Start the session.
+4. Watch the live timer in the top bar.
+5. Finish the session and review the generated entry.
+
+## AI and Privacy
+
+AI is optional. Without a Gemini key, AutoDoc still supports local sessions,
+manual logs, Markdown viewing, screenshots, and statistics. When AI is enabled,
+the relevant notes or project files are sent to the provider to produce a result.
+Review AI output before saving or applying it.
+
+## GitHub
+
+GitHub is optional. The app can use GitHub device sign-in when a public OAuth
+client ID is configured. Local logs remain usable without GitHub.
+
+The **Sync to GitHub** action uses two confirmations: first review changed files,
+then confirm staging Markdown logs, committing, and pushing. It does not silently
+sync the entire project.
+
+## Vibe Code Safety
+
+Vibe Code creates a backup before applying changes, blocks protected folders,
+restricts edits to the selected project, validates changed Python files, and
+rolls back when validation fails. It does not run shell commands automatically.
+
+## Updates
+
+Open **Settings** and choose **Check for updates** whenever you want. Updates
+are never downloaded or installed automatically.
+
+## Troubleshooting
+
+- If the app opens in the wrong folder, use **Choose project** in the sidebar.
+- If Gemini is unavailable, continue locally or add your key in **Settings**.
+- If GitHub sync fails, confirm the folder is a Git repository with a configured remote.
+- If Windows warns about the executable, verify the SHA-256 value shown on the release page.
+
+## Source Installation
+
+Developers can run the source version with Python 3.10 or newer:
+
+```powershell
+python -m pip install -r .\public_edition\requirements.txt
+python .\autodoc\public_gui.py
+```
+
 ## Included Features
 
 - Local project initialization

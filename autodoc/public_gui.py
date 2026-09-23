@@ -49,6 +49,7 @@ class PublicApp(tk.Tk):
         self.configure_styles()
         self.build_layout()
         self.refresh_dashboard()
+        self.after(150, self.show_onboarding_if_needed)
 
     def configure_styles(self):
         style = ttk.Style(self)
@@ -137,6 +138,56 @@ class PublicApp(tk.Tk):
         ttk.Label(activity, text=status, style="Body.TLabel").pack(anchor="w", pady=(10, 18))
         ttk.Label(activity, text=f"Project folder: {Path.cwd()}", style="Body.TLabel", wraplength=620).pack(anchor="w", pady=(0, 18))
         ttk.Button(activity, text="Open Session", style="Primary.TButton", command=self.show_session).pack(anchor="w")
+
+    def show_onboarding_if_needed(self):
+        if not self.settings.get("onboarding_complete"):
+            self.show_onboarding()
+
+    def show_onboarding(self):
+        dialog = tk.Toplevel(self)
+        dialog.title("Welcome to AutoDoc Public Edition")
+        dialog.geometry("640x520")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.configure(bg="#f4f6fb")
+
+        shell = ttk.Frame(dialog, style="App.TFrame", padding=30)
+        shell.pack(fill="both", expand=True)
+        ttk.Label(shell, text="Welcome to AutoDoc.", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(shell, text="A calm home for your work, notes, and ideas.", style="Subtitle.TLabel").pack(anchor="w", pady=(4, 24))
+
+        integrations = ttk.Frame(shell, style="Card.TFrame", padding=20)
+        integrations.pack(fill="x")
+        ttk.Label(integrations, text="Before you begin", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(integrations, text="These are optional. You can change them later in Settings.", style="Body.TLabel").pack(anchor="w", pady=(6, 18))
+
+        ttk.Label(integrations, text="GitHub", style="CardTitle.TLabel").pack(anchor="w")
+        self.onboarding_github = tk.StringVar(value="later")
+        ttk.Radiobutton(integrations, text="Sign in now", variable=self.onboarding_github, value="now").pack(anchor="w", pady=(8, 2))
+        ttk.Radiobutton(integrations, text="I'll do this later", variable=self.onboarding_github, value="later").pack(anchor="w")
+
+        ttk.Label(integrations, text="AI assistant", style="CardTitle.TLabel").pack(anchor="w", pady=(18, 0))
+        self.onboarding_ai = tk.StringVar(value=self.settings.get("ai_provider", "none"))
+        ai_options = ttk.Frame(integrations, style="Card.TFrame")
+        ai_options.pack(fill="x", pady=(8, 0))
+        ttk.Radiobutton(ai_options, text="Gemini", variable=self.onboarding_ai, value="gemini").pack(side="left", padx=(0, 16))
+        ttk.Radiobutton(ai_options, text="No AI for now", variable=self.onboarding_ai, value="none").pack(side="left", padx=(0, 16))
+        ttk.Radiobutton(ai_options, text="Another provider later", variable=self.onboarding_ai, value="other").pack(side="left")
+        ttk.Label(integrations, text="Gemini is currently built in. Other providers can be selected later as integrations are added.", style="Body.TLabel", wraplength=540).pack(anchor="w", pady=(8, 0))
+
+        actions = ttk.Frame(shell, style="App.TFrame")
+        actions.pack(fill="x", pady=(24, 0))
+        ttk.Button(actions, text="Start locally", style="Primary.TButton", command=lambda: self.finish_onboarding(dialog)).pack(side="right")
+
+    def finish_onboarding(self, dialog):
+        self.settings["onboarding_complete"] = True
+        self.settings["ai_provider"] = self.onboarding_ai.get()
+        public_cli.STATE_DIR.mkdir(exist_ok=True)
+        SETTINGS_FILE.write_text(json.dumps(self.settings, indent=2) + "\n", encoding="utf-8")
+        dialog.destroy()
+        if self.onboarding_github.get() == "now":
+            self.show_settings()
+            self.github_sign_in()
 
     def choose_project(self):
         project = filedialog.askdirectory(title="Choose an AutoDoc project folder", initialdir=str(Path.cwd()))
