@@ -29,7 +29,7 @@ except ImportError:
 SETTINGS_FILE = public_cli.STATE_DIR / "settings.json"
 UPDATE_API_URL = os.getenv(
     "AUTODOC_UPDATE_API_URL",
-    "https://api.github.com/repos/harkd/AutoDoc/releases/latest",
+    "https://api.github.com/repos/harkdev1/AutoDoc-Public-Edition/releases/latest",
 )
 GITHUB_CLIENT_ID = os.getenv("AUTODOC_GITHUB_CLIENT_ID", "")
 
@@ -43,6 +43,8 @@ class PublicApp(tk.Tk):
         self.configure(bg="#f5f7fb")
         self.session_started_at = None
         self.session = None
+        self.sidebar_open = True
+        self.nav_buttons = []
         self.settings = self.load_settings()
         self.configure_styles()
         self.build_layout()
@@ -51,50 +53,74 @@ class PublicApp(tk.Tk):
     def configure_styles(self):
         style = ttk.Style(self)
         style.theme_use("clam")
-        style.configure("App.TFrame", background="#f5f7fb")
-        style.configure("Sidebar.TFrame", background="#172033")
-        style.configure("Sidebar.TLabel", background="#172033", foreground="#dbe5f5")
-        style.configure("Title.TLabel", background="#f5f7fb", foreground="#172033", font=("Segoe UI", 24, "bold"))
-        style.configure("Subtitle.TLabel", background="#f5f7fb", foreground="#61708a", font=("Segoe UI", 10))
+        style.configure("App.TFrame", background="#f4f6fb")
+        style.configure("Sidebar.TFrame", background="#111827")
+        style.configure("Sidebar.TLabel", background="#111827", foreground="#dbe5f5")
+        style.configure("Title.TLabel", background="#f4f6fb", foreground="#111827", font=("Segoe UI", 27, "bold"))
+        style.configure("Subtitle.TLabel", background="#f4f6fb", foreground="#64748b", font=("Segoe UI", 10))
+        style.configure("Topbar.TFrame", background="#ffffff")
+        style.configure("Topbar.TLabel", background="#ffffff", foreground="#334155", font=("Segoe UI", 10, "bold"))
+        style.configure("Timer.TLabel", background="#ffffff", foreground="#287a63", font=("Segoe UI", 11, "bold"))
         style.configure("Card.TFrame", background="#ffffff", relief="solid", borderwidth=1)
-        style.configure("CardTitle.TLabel", background="#ffffff", foreground="#172033", font=("Segoe UI", 11, "bold"))
-        style.configure("CardValue.TLabel", background="#ffffff", foreground="#287a63", font=("Segoe UI", 22, "bold"))
+        style.configure("CardTitle.TLabel", background="#ffffff", foreground="#111827", font=("Segoe UI", 11, "bold"))
+        style.configure("CardValue.TLabel", background="#ffffff", foreground="#287a63", font=("Segoe UI", 25, "bold"))
         style.configure("Body.TLabel", background="#ffffff", foreground="#42506a", font=("Segoe UI", 10))
-        style.configure("Nav.TButton", background="#172033", foreground="#dbe5f5", borderwidth=0, anchor="w", padding=12)
-        style.map("Nav.TButton", background=[("active", "#263754")])
-        style.configure("Primary.TButton", background="#287a63", foreground="#ffffff", padding=10, borderwidth=0)
+        style.configure("Nav.TButton", background="#111827", foreground="#dbe5f5", borderwidth=0, anchor="w", padding=13, font=("Segoe UI", 10, "bold"))
+        style.map("Nav.TButton", background=[("active", "#253451")])
+        style.configure("Primary.TButton", background="#287a63", foreground="#ffffff", padding=11, borderwidth=0, font=("Segoe UI", 10, "bold"))
         style.map("Primary.TButton", background=[("active", "#1f624f")])
         style.configure("Secondary.TButton", background="#e8edf5", foreground="#263754", padding=9, borderwidth=0)
 
     def build_layout(self):
-        sidebar = ttk.Frame(self, style="Sidebar.TFrame", width=210)
+        self.sidebar = ttk.Frame(self, style="Sidebar.TFrame", width=230)
+        sidebar = self.sidebar
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
 
         ttk.Label(sidebar, text="AutoDoc", style="Sidebar.TLabel", font=("Segoe UI", 20, "bold")).pack(anchor="w", padx=22, pady=(28, 2))
         ttk.Label(sidebar, text="PUBLIC EDITION", style="Sidebar.TLabel", font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=24, pady=(0, 35))
         for label, page in (("Dashboard", self.show_dashboard), ("Session", self.show_session), ("Manual Log", self.show_manual_log), ("Logs", self.show_logs), ("Vibe Code", self.show_vibe_code), ("Settings", self.show_settings)):
-            ttk.Button(sidebar, text=label, style="Nav.TButton", command=page).pack(fill="x", padx=10, pady=2)
-        ttk.Button(sidebar, text="Choose project", style="Nav.TButton", command=self.choose_project).pack(fill="x", padx=10, pady=(18, 2))
-        ttk.Label(sidebar, text="Local-first\nNo API key required", style="Sidebar.TLabel", justify="left").pack(side="bottom", anchor="w", padx=24, pady=24)
+            button = ttk.Button(sidebar, text=label, style="Nav.TButton", command=page)
+            button.pack(fill="x", padx=10, pady=2)
+            self.nav_buttons.append((button, label))
+        self.project_button = ttk.Button(sidebar, text="Choose project", style="Nav.TButton", command=self.choose_project)
+        self.project_button.pack(fill="x", padx=10, pady=(18, 2))
+        self.sidebar_note = ttk.Label(sidebar, text="LOCAL-FIRST\nNo API key required", style="Sidebar.TLabel", justify="left")
+        self.sidebar_note.pack(side="bottom", anchor="w", padx=24, pady=24)
 
         self.content = ttk.Frame(self, style="App.TFrame", padding=32)
         self.content.pack(side="left", fill="both", expand=True)
+        topbar = ttk.Frame(self.content, style="Topbar.TFrame", padding=(14, 10))
+        topbar.pack(fill="x", pady=(0, 24))
+        ttk.Button(topbar, text="Menu", style="Secondary.TButton", command=self.toggle_sidebar).pack(side="left")
+        self.timer_label = ttk.Label(topbar, text="No active session", style="Timer.TLabel")
+        self.timer_label.pack(side="right")
+        self.page_content = ttk.Frame(self.content, style="App.TFrame")
+        self.page_content.pack(fill="both", expand=True)
         self.show_dashboard()
+        self.update_timer()
+
+    def toggle_sidebar(self):
+        self.sidebar_open = not self.sidebar_open
+        self.sidebar.configure(width=230 if self.sidebar_open else 58)
+        for button, label in self.nav_buttons:
+            button.configure(text=label if self.sidebar_open else label[:1])
+        self.project_button.configure(text="Choose project" if self.sidebar_open else "+")
+        self.sidebar_note.configure(text="LOCAL-FIRST\nNo API key required" if self.sidebar_open else "LOCAL")
 
     def clear_content(self):
-        for child in self.content.winfo_children():
+        for child in self.page_content.winfo_children():
             child.destroy()
 
     def page_header(self, title, subtitle):
-        ttk.Label(self.content, text=title, style="Title.TLabel").pack(anchor="w")
-        ttk.Label(self.content, text=subtitle, style="Subtitle.TLabel").pack(anchor="w", pady=(4, 24))
+        ttk.Label(self.page_content, text=title, style="Title.TLabel").pack(anchor="w")
+        ttk.Label(self.page_content, text=subtitle, style="Subtitle.TLabel").pack(anchor="w", pady=(4, 24))
 
     def show_dashboard(self):
         self.clear_content()
         self.page_header("Good to see you.", "Your engineering workspace, kept simple and local.")
         stats = public_cli.load_stats()
-        cards = ttk.Frame(self.content, style="App.TFrame")
+        cards = ttk.Frame(self.page_content, style="App.TFrame")
         cards.pack(fill="x")
         values = (("Sessions", stats["total_sessions"]), ("Minutes", stats["total_minutes"]), ("Days logged", len(stats["days_logged"])))
         for title, value in values:
@@ -103,7 +129,7 @@ class PublicApp(tk.Tk):
             ttk.Label(card, text=title, style="CardTitle.TLabel").pack(anchor="w")
             ttk.Label(card, text=str(value), style="CardValue.TLabel").pack(anchor="w", pady=(10, 0))
 
-        activity = ttk.Frame(self.content, style="Card.TFrame", padding=22)
+        activity = ttk.Frame(self.page_content, style="Card.TFrame", padding=22)
         activity.pack(fill="both", expand=True, pady=(22, 0))
         ttk.Label(activity, text="Workspace status", style="CardTitle.TLabel").pack(anchor="w")
         active = public_cli.SESSION_FILE.exists()
@@ -116,12 +142,20 @@ class PublicApp(tk.Tk):
         project = filedialog.askdirectory(title="Choose an AutoDoc project folder", initialdir=str(Path.cwd()))
         if project:
             os.chdir(project)
+            public_cli.STATE_DIR = Path(project) / ".autodoc-public"
+            public_cli.SESSION_FILE = public_cli.STATE_DIR / "session.json"
+            public_cli.STATS_FILE = public_cli.STATE_DIR / "stats.json"
+            public_cli.LOG_DIR = Path(project) / "logs"
+            public_cli.SCREENSHOT_DIR = Path(project) / "screenshots"
+            global SETTINGS_FILE
+            SETTINGS_FILE = public_cli.STATE_DIR / "settings.json"
+            self.settings = self.load_settings()
             self.show_dashboard()
 
     def show_session(self):
         self.clear_content()
         self.page_header("Focus session", "Capture the work while it is happening.")
-        form = ttk.Frame(self.content, style="Card.TFrame", padding=24)
+        form = ttk.Frame(self.page_content, style="Card.TFrame", padding=24)
         form.pack(fill="x")
         self.goal = tk.StringVar()
         self.done = tk.StringVar()
@@ -143,6 +177,7 @@ class PublicApp(tk.Tk):
         session = {"start_time": datetime.now().isoformat(timespec="seconds"), "goal": self.goal.get(), "definition_of_done": self.done.get(), "blockers": "", "planned_minutes": self.planned.get()}
         public_cli.SESSION_FILE.write_text(json.dumps(session, indent=2) + "\n", encoding="utf-8")
         messagebox.showinfo("Session started", "Your focus session is now active.")
+        self.update_timer()
         self.show_session()
 
     def finish_session(self):
@@ -159,6 +194,7 @@ class PublicApp(tk.Tk):
             log_file = public_cli.append_log(entry, date_str)
             public_cli.record_session(date_str, duration)
             public_cli.SESSION_FILE.unlink()
+            self.update_timer()
             messagebox.showinfo("Session saved", f"Markdown log written to {log_file}")
             self.show_dashboard()
         except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
@@ -186,7 +222,7 @@ class PublicApp(tk.Tk):
     def show_manual_log(self):
         self.clear_content()
         self.page_header("Manual log", "Record one piece of work without starting an ongoing session.")
-        form = ttk.Frame(self.content, style="Card.TFrame", padding=24)
+        form = ttk.Frame(self.page_content, style="Card.TFrame", padding=24)
         form.pack(fill="both", expand=True)
         self.manual_date = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
         self.manual_start = tk.StringVar(value="")
@@ -247,10 +283,10 @@ class PublicApp(tk.Tk):
     def show_logs(self):
         self.clear_content()
         self.page_header("Logs", "Read every local Markdown record inside AutoDoc.")
-        toolbar = ttk.Frame(self.content, style="App.TFrame")
+        toolbar = ttk.Frame(self.page_content, style="App.TFrame")
         toolbar.pack(fill="x", pady=(0, 12))
         ttk.Button(toolbar, text="Sync to GitHub", style="Secondary.TButton", command=self.sync_to_github).pack(side="right")
-        body = ttk.Frame(self.content, style="App.TFrame")
+        body = ttk.Frame(self.page_content, style="App.TFrame")
         body.pack(fill="both", expand=True)
         files = sorted(public_cli.LOG_DIR.glob("*.md"), reverse=True) if public_cli.LOG_DIR.exists() else []
         self.log_list = tk.Listbox(body, width=28, exportselection=False)
@@ -300,7 +336,7 @@ class PublicApp(tk.Tk):
     def show_settings(self):
         self.clear_content()
         self.page_header("Settings", "Optional integrations stay under your control.")
-        panel = ttk.Frame(self.content, style="Card.TFrame", padding=24)
+        panel = ttk.Frame(self.page_content, style="Card.TFrame", padding=24)
         panel.pack(fill="x")
         ttk.Label(panel, text="Gemini API key", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
         self.api_key = tk.StringVar(value=self.settings.get("gemini_api_key", ""))
@@ -312,13 +348,13 @@ class PublicApp(tk.Tk):
         ttk.Label(panel, text="Optional. Use a public GitHub OAuth App client ID for device sign-in.", style="Body.TLabel").pack(anchor="w", pady=(0, 18))
         ttk.Button(panel, text="Save settings", style="Primary.TButton", command=self.save_settings).pack(anchor="w")
 
-        github = ttk.Frame(self.content, style="Card.TFrame", padding=24)
+        github = ttk.Frame(self.page_content, style="Card.TFrame", padding=24)
         github.pack(fill="x", pady=(18, 0))
         ttk.Label(github, text="GitHub", style="CardTitle.TLabel").pack(anchor="w")
         ttk.Label(github, text="Sign in is optional and requires a configured GitHub OAuth app.", style="Body.TLabel").pack(anchor="w", pady=(8, 12))
         ttk.Button(github, text="Open GitHub sign-in", style="Secondary.TButton", command=self.github_sign_in).pack(anchor="w")
 
-        updates = ttk.Frame(self.content, style="Card.TFrame", padding=24)
+        updates = ttk.Frame(self.page_content, style="Card.TFrame", padding=24)
         updates.pack(fill="x", pady=(18, 0))
         ttk.Label(updates, text="Updates", style="CardTitle.TLabel").pack(anchor="w")
         ttk.Label(updates, text="Check manually whenever you choose. Nothing updates automatically.", style="Body.TLabel").pack(anchor="w", pady=(8, 12))
@@ -327,7 +363,7 @@ class PublicApp(tk.Tk):
     def show_vibe_code(self):
         self.clear_content()
         self.page_header("Vibe Code", "Describe a feature. Review the proposal. Apply only what you approve.")
-        panel = ttk.Frame(self.content, style="Card.TFrame", padding=24)
+        panel = ttk.Frame(self.page_content, style="Card.TFrame", padding=24)
         panel.pack(fill="both", expand=True)
         ttk.Label(panel, text="What would you like to build?", style="CardTitle.TLabel").pack(anchor="w")
         self.vibe_request = tk.Text(panel, height=6, wrap="word", font=("Segoe UI", 10))
@@ -466,7 +502,26 @@ class PublicApp(tk.Tk):
             webbrowser.open(url)
 
     def refresh_dashboard(self):
-        pass
+        self.update_timer()
+
+    def update_timer(self):
+        if public_cli.SESSION_FILE.exists():
+            try:
+                session = json.loads(public_cli.SESSION_FILE.read_text(encoding="utf-8"))
+                started = datetime.fromisoformat(session["start_time"])
+                elapsed = max(0, int((datetime.now() - started).total_seconds()))
+                planned = int(session.get("planned_minutes", 0))
+                hours, remainder = divmod(elapsed, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                timer = f"LIVE  {hours:02d}:{minutes:02d}:{seconds:02d}"
+                if planned:
+                    timer += f"  /  {planned} min"
+                self.timer_label.configure(text=timer)
+            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+                self.timer_label.configure(text="Session needs attention")
+        else:
+            self.timer_label.configure(text="No active session")
+        self.after(1000, self.update_timer)
 
 
 if __name__ == "__main__":
