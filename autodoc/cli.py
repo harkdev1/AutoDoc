@@ -5,6 +5,7 @@ import click
 import subprocess
 import json
 import re
+import shutil
 import sys
 import time
 import subprocess
@@ -17,6 +18,7 @@ VERSION = "0.1.0"
 MONITOR_STATE_FILE = Path(".autodoc") / "screen_monitor.json"
 MONITOR_STOP_FILE = Path(".autodoc") / "screen_monitor.stop"
 MONITOR_MAX_FRAMES = 240
+REPOSITORY_CONFIG_FILE = Path(".autodoc") / "repository.json"
 
 def estimate_session_time(goal):
     """Use Gemini to estimate realistic time for a goal"""
@@ -96,6 +98,35 @@ def get_api_key():
             pass
     
     return None
+
+
+def load_repository_config():
+    if not REPOSITORY_CONFIG_FILE.exists():
+        return {}
+    try:
+        with REPOSITORY_CONFIG_FILE.open("r", encoding="utf-8") as config_file:
+            return json.load(config_file)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_repository_config(config):
+    REPOSITORY_CONFIG_FILE.parent.mkdir(exist_ok=True)
+    with REPOSITORY_CONFIG_FILE.open("w", encoding="utf-8") as config_file:
+        json.dump(config, config_file, indent=2)
+
+
+def push_repository_if_enabled():
+    config = load_repository_config()
+    if not config.get("auto_sync"):
+        return False
+    try:
+        subprocess.run(["git", "push"], check=True)
+        click.echo("GitHub sync complete.")
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError) as error:
+        click.echo(f"Automatic GitHub sync failed: {error}")
+        return False
 
 
 def save_activity_sheet(frames, started_at, stopped_at):
@@ -434,6 +465,80 @@ Commands:
   version  Show AutoDoc version
 """
     pass
+
+
+@click.group()
+def repo():
+    """Create and sync the Git repository for the current project."""
+
+
+@repo.command("create")
+@click.option("--name", default=None, help="GitHub repository name; defaults to the folder name.")
+@click.option("--private/--public", default=True, help="Set the GitHub repository visibility.")
+@click.option("--auto-sync/--no-auto-sync", default=True, show_default=True)
+def repo_create(name, private, auto_sync):
+    """Create a local repository and publish it to GitHub with one setup flow."""
+    init.callback()
+    if not Path(".git").exists():
+        subprocess.run(["git", "init"], check=True)
+    subprocess.run(["git", "branch", "-M", "main"], check=False)
+
+    repository_name = name or Path.cwd().name
+    visibility = "private" if private else "public"
+    click.confirm(
+        f"Create GitHub repository '{repository_name}' as {visibility} and enable automatic sync?",
+        abort=True,
+    )
+    subprocess.run(["git", "add", "."], check=True)
+    commit = subprocess.run(
+        ["git", "commit", "-m", "Initialize AutoDoc project"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if commit.returncode not in (0, 1):
+        raise click.ClickException(commit.stderr.strip() or "Initial Git commit failed.")
+
+    if not shutil.which("gh"):
+        save_repository_config({"name": repository_name, "visibility": visibility, "auto_sync": False})
+        raise click.ClickException("GitHub CLI (gh) is not installed. The local repository was created; install gh and rerun repo create.")
+
+    command = ["gh", "repo", "create", repository_name, "--source", ".", "--remote", "origin", "--push"]
+    command.append(f"--{visibility}")
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as error:
+        raise click.ClickException(f"GitHub repository creation failed with exit code {error.returncode}.") from error
+
+    save_repository_config({"name": repository_name, "visibility": visibility, "auto_sync": auto_sync})
+    click.echo(f"Repository ready: {repository_name}")
+    click.echo(f"Automatic sync: {'ON' if auto_sync else 'OFF'}")
+
+
+@repo.command("status")
+def repo_status():
+    """Show repository and automatic-sync settings."""
+    config = load_repository_config()
+    if not Path(".git").exists():
+        click.echo("Git repository: not initialized")
+        return
+    click.echo("Git repository: initialized")
+    click.echo(f"Remote: {config.get('name', 'not configured')}")
+    click.echo(f"Automatic sync: {'ON' if config.get('auto_sync') else 'OFF'}")
+
+
+@repo.command("sync")
+def repo_sync():
+    """Push the current committed branch to its configured remote."""
+    if not Path(".git").exists():
+        raise click.ClickException("Git repository is not initialized. Run autodoc repo create first.")
+    if not subprocess.run(["git", "remote", "get-url", "origin"], check=False, capture_output=True).stdout:
+        raise click.ClickException("No origin remote is configured.")
+    try:
+        subprocess.run(["git", "push"], check=True)
+        click.echo("GitHub sync complete.")
+    except (FileNotFoundError, subprocess.CalledProcessError) as error:
+        raise click.ClickException(f"GitHub sync failed: {error}") from error
 
 @click.command()
 def propose():
@@ -1138,11 +1243,16 @@ Reviewer Notes: {review["notes"]}
     update_readme_dashboard()
 
     # Git automation
+    commit_created = False
     try:
         subprocess.run(["git", "add", "."], check=True)
         subprocess.run(["git", "commit", "-m", f"AutoDoc session {date_str}"], check=True)
+        commit_created = True
     except:
         click.echo("Git commit failed.")
+
+    if commit_created:
+        push_repository_if_enabled()
 
     # Save handover note for next session
     prev_file = ".autodoc/previous_session.json"
@@ -1298,6 +1408,7 @@ cli.add_command(screenshot_workflow)
 cli.add_command(screenshot_command)
 cli.add_command(propose)
 cli.add_command(monitor)
+cli.add_command(repo)
 
 if __name__ == "__main__":
     cli()

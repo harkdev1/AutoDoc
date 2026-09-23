@@ -108,6 +108,22 @@ autodoc version   Show AutoDoc version
 autodoc monitor   Capture optional activity snapshots during work
 ```
 
+### One-Command GitHub Setup
+
+After creating or entering a project, install and authenticate the GitHub CLI
+once, then let AutoDoc handle the rest:
+
+```powershell
+gh auth login
+autodoc repo create --name my-project --private --auto-sync
+```
+
+This initializes Git, creates the GitHub repository, pushes the initial project,
+and enables automatic `git push` after each successful `autodoc finish` commit.
+Use `autodoc repo status` to check the setting or `autodoc repo sync` to push
+manually. Review `.gitignore` before enabling sync so secrets and local state are
+excluded.
+
 ### Simple Session Rhythm
 
 For a new project, the shortest workflow is:
