@@ -105,7 +105,23 @@ autodoc doctor    Check project health
 autodoc status    Show project status
 autodoc stats     Show detailed statistics
 autodoc version   Show AutoDoc version
+autodoc monitor   Capture optional activity snapshots during work
 ```
+
+### Passive Activity Capture
+
+AutoDoc can optionally capture low-resolution screen snapshots while you work:
+
+```powershell
+autodoc monitor start --interval 30
+autodoc monitor status
+autodoc monitor stop
+```
+
+The command asks for explicit consent before starting. It keeps a limited number
+of compressed snapshots in memory, saves one contact sheet when stopped, and does
+not save a video. Screen capture can include private information, so stop it
+before entering passwords, API keys, or other sensitive material.
 
 ## Requirements
 

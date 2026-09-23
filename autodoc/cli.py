@@ -1,16 +1,21 @@
 from datetime import datetime
+from io import BytesIO
 import os
 import click
 import subprocess
 import json
+import sys
 import time
 import subprocess
 from pathlib import Path
 from google import genai
 from google.genai import types
-from PIL import ImageGrab
+from PIL import Image, ImageGrab, ImageOps
 
 VERSION = "0.1.0"
+MONITOR_STATE_FILE = Path(".autodoc") / "screen_monitor.json"
+MONITOR_STOP_FILE = Path(".autodoc") / "screen_monitor.stop"
+MONITOR_MAX_FRAMES = 240
 
 def estimate_session_time(goal):
     """Use Gemini to estimate realistic time for a goal"""
@@ -90,6 +95,130 @@ def get_api_key():
             pass
     
     return None
+
+
+def save_activity_sheet(frames, started_at, stopped_at):
+    """Save one contact sheet from in-memory snapshots; never writes a video."""
+    if not frames:
+        return None
+
+    screenshots_dir = Path("screenshots")
+    screenshots_dir.mkdir(exist_ok=True)
+    timestamp = stopped_at.strftime("%Y-%m-%d_%H%M%S")
+    filename = screenshots_dir / f"activity_{timestamp}.jpg"
+    thumbnails = []
+    for frame in frames:
+        with Image.open(BytesIO(frame)) as image:
+            thumbnails.append(image.convert("RGB"))
+
+    columns = 4
+    tile_width, tile_height = 320, 200
+    rows = (len(thumbnails) + columns - 1) // columns
+    sheet = Image.new("RGB", (columns * tile_width, rows * tile_height), "white")
+    for index, thumbnail in enumerate(thumbnails):
+        tile = ImageOps.contain(thumbnail, (tile_width - 12, tile_height - 32))
+        left = (index % columns) * tile_width + (tile_width - tile.width) // 2
+        top = (index // columns) * tile_height + 8
+        sheet.paste(tile, (left, top))
+
+    sheet.save(filename, "JPEG", quality=78, optimize=True)
+    date_str = stopped_at.strftime("%Y-%m-%d")
+    log_filename = Path("logs") / f"{date_str}.md"
+    Path("logs").mkdir(exist_ok=True)
+    if not log_filename.exists():
+        log_filename.write_text(f"# Engineering Log – {date_str}\n", encoding="utf-8")
+    markdown_path = f"../screenshots/{filename.name}"
+    entry = (
+        f"\n## Passive activity capture – {started_at.strftime('%H:%M')} to {stopped_at.strftime('%H:%M')}\n"
+        f"![Passive activity capture]({markdown_path})\n"
+        f"Snapshots: {len(frames)} (stored as one contact sheet; no video saved)\n"
+    )
+    with log_filename.open("a", encoding="utf-8") as log_file:
+        log_file.write(entry)
+    return filename
+
+
+def monitor_worker(interval):
+    started_at = datetime.now()
+    frames = []
+    MONITOR_STOP_FILE.unlink(missing_ok=True)
+    while not MONITOR_STOP_FILE.exists() and len(frames) < MONITOR_MAX_FRAMES:
+        try:
+            with ImageGrab.grab() as screenshot:
+                screenshot.thumbnail((640, 400))
+                buffer = BytesIO()
+                screenshot.convert("RGB").save(buffer, "JPEG", quality=60, optimize=True)
+                frames.append(buffer.getvalue())
+        except Exception:
+            pass
+        if not MONITOR_STOP_FILE.exists():
+            time.sleep(interval)
+
+    stopped_at = datetime.now()
+    save_activity_sheet(frames, started_at, stopped_at)
+    MONITOR_STOP_FILE.unlink(missing_ok=True)
+    MONITOR_STATE_FILE.unlink(missing_ok=True)
+
+
+@click.group()
+def monitor():
+    """Capture optional, local-only activity snapshots during focused work."""
+
+
+@monitor.command("start")
+@click.option("--interval", type=click.IntRange(5, 3600), default=30, show_default=True)
+def monitor_start(interval):
+    """Start background snapshots; stop with `autodoc monitor stop`."""
+    if MONITOR_STATE_FILE.exists():
+        raise click.ClickException("Screen activity capture is already running.")
+
+    click.confirm(
+        "This captures your screen every interval seconds and may include private information. "
+        "Only one contact sheet is saved when stopped; no video is saved. Continue?",
+        abort=True,
+    )
+    MONITOR_STATE_FILE.parent.mkdir(exist_ok=True)
+    MONITOR_STOP_FILE.unlink(missing_ok=True)
+    MONITOR_STATE_FILE.write_text(
+        json.dumps({"started_at": datetime.now().isoformat(timespec="seconds"), "interval": interval}),
+        encoding="utf-8",
+    )
+    log_path = MONITOR_STATE_FILE.with_suffix(".log")
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+    subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "monitor", "worker", "--interval", str(interval)],
+        stdin=subprocess.DEVNULL,
+        stdout=log_path.open("a", encoding="utf-8"),
+        stderr=subprocess.STDOUT,
+        creationflags=creation_flags,
+        close_fds=True,
+    )
+    click.echo(f"Passive screen capture started (every {interval}s). Stop with: autodoc monitor stop")
+
+
+@monitor.command("stop")
+def monitor_stop():
+    """Stop capture and save one contact sheet to the daily log."""
+    if not MONITOR_STATE_FILE.exists():
+        raise click.ClickException("Screen activity capture is not running.")
+    MONITOR_STOP_FILE.write_text("stop", encoding="utf-8")
+    click.echo("Stopping capture. Saving one activity contact sheet...")
+
+
+@monitor.command("status")
+def monitor_status():
+    """Show whether background capture is active."""
+    if MONITOR_STATE_FILE.exists():
+        click.echo("Screen activity capture: ON")
+    else:
+        click.echo("Screen activity capture: OFF")
+
+
+@monitor.command("worker", hidden=True)
+@click.option("--interval", type=click.IntRange(5, 3600), required=True)
+def monitor_worker_command(interval):
+    """Run the background capture worker."""
+    monitor_worker(interval)
 
 @click.command()
 def setup():
@@ -1064,6 +1193,7 @@ cli.add_command(setup)
 cli.add_command(demo)
 cli.add_command(screenshot_workflow)
 cli.add_command(propose)
+cli.add_command(monitor)
 
 if __name__ == "__main__":
     cli()
