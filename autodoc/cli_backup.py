@@ -742,7 +742,7 @@ def start():
 
 @click.command()
 def screenshot_workflow():
-    """Capture screenshots and add Markdown references to the daily log."""
+    """Capture screenshots and add them directly to the daily Markdown log."""
 
     os.makedirs("screenshots", exist_ok=True)
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -775,21 +775,17 @@ def screenshot_workflow():
 
             click.echo(f"Screenshot saved: {screenshot_path}")
 
-            # Correct relative path from logs/ to screenshots/
-            markdown_path = f"../screenshots/{filename}"
-
+            # Add screenshot reference directly to the daily Markdown log
             description = f"Screenshot captured at {timestamp}"
-
-            markdown_entry = (
-                f"\n## {description}\n"
-                f"![{description}]({markdown_path})\n"
+            markdown_link = (
+                f"\n### {description}\n"
+                f"![{description}]({screenshot_path.replace(os.sep, '/')})\n"
             )
 
-            # Append Markdown reference directly to the daily log
             with open(log_filename, "a", encoding="utf-8") as log_file:
-                log_file.write(markdown_entry)
+                log_file.write(markdown_link)
 
-            click.echo(f"Markdown reference added to: {log_filename}")
+            click.echo(f"Screenshot reference added to: {log_filename}")
 
         except Exception as e:
             click.echo(f"Screenshot capture or logging failed: {e}")
@@ -904,7 +900,7 @@ Reviewer Notes: {review["notes"]}
     update_readme_dashboard()
 
     # Screenshot workflow
-    screenshot_workflow.callback()
+    screenshot()
 
     # Git automation
     try:
