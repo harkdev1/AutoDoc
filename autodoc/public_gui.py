@@ -776,7 +776,7 @@ RECENT JOURNAL CONTEXT:
         ttk.Label(panel, text="Proposal preview", style="CardTitle.TLabel").pack(anchor="w", pady=(22, 8))
         self.vibe_output = tk.Text(panel, height=14, wrap="word", state="disabled", font=("Consolas", 9))
         self.vibe_output.pack(fill="both", expand=True)
-        self.apply_vibe_button = ttk.Button(panel, text="Apply approved changes", style="Secondary.TButton", command=self.apply_vibe, state="disabled")
+        self.apply_vibe_button = ttk.Button(panel, text="Apply and test", style="Secondary.TButton", command=self.apply_vibe, state="disabled")
         self.apply_vibe_button.pack(anchor="w", pady=(14, 0))
         self.vibe_proposal = None
         self.vibe_loading = False
@@ -838,16 +838,24 @@ RECENT JOURNAL CONTEXT:
         if public_cli.SESSION_FILE.exists():
             messagebox.showwarning("Finish session first", "Vibe Code cannot apply changes while a focus session is open.")
             return
-        if not messagebox.askyesno("Apply changes", "Create a backup and apply this proposal?\n\nPython files will be syntax-checked afterward."):
+        if not messagebox.askyesno("Apply and test", "Create a backup, apply this proposal, and run safe checks immediately?"):
             return
+        self.vibe_loading = True
+        self.apply_vibe_button.configure(state="disabled")
+        self.set_vibe_output("Applying the approved proposal and running safe checks...\n")
         try:
             coder = VibeCoder(Path.cwd(), self.settings.get("gemini_api_key", ""))
             changed, backup_dir = coder.apply(self.vibe_proposal)
+            checked = coder.run_post_apply_checks(changed)
             names = ", ".join(str(path.relative_to(Path.cwd())) for path in changed)
-            messagebox.showinfo("Changes applied", f"Updated: {names}\nBackup: {backup_dir}")
-            self.apply_vibe_button.configure(state="disabled")
+            checked_names = ", ".join(checked)
+            self.vibe_loading = False
+            self.set_vibe_output(f"Applied successfully.\n\nChanged:\n{names}\n\nChecks passed:\n{checked_names}\n\nBackup:\n{backup_dir}")
+            messagebox.showinfo("Changes applied and tested", f"Updated: {names}\nSafe checks passed.\nBackup: {backup_dir}")
         except Exception as error:
-            messagebox.showerror("Changes rejected", str(error))
+            self.vibe_loading = False
+            self.set_vibe_output(f"Apply/test failed; changes were rolled back.\n\n{error}")
+            messagebox.showerror("Changes rejected", f"Apply/test failed; changes were rolled back.\n\n{error}")
 
     def save_settings(self):
         public_cli.STATE_DIR.mkdir(exist_ok=True)

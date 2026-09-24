@@ -36,7 +36,7 @@ Your existing developer AutoDoc state is not used.
 - **Project Hub**: Create or open projects, see the daily focus, and sync the full project to GitHub after review.
 - **Manual Log**: Record one piece of work without starting a session or timer.
 - **Logs**: Read every local Markdown log inside the app.
-- **Vibe Code**: Ask Gemini for a proposed feature, review the files, and apply only approved changes.
+- **Vibe Code**: Ask Gemini for a proposed feature, then use one approved **Apply and test** action. AutoDoc backs up the project and validates changed Python and JSON files immediately.
 - **Settings**: Configure Gemini, GitHub, and manual update checks.
 
 ## Manual Log

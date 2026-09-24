@@ -108,7 +108,7 @@ Rules:
                 target.write_text(item["content"], encoding="utf-8")
                 changed_paths.append(target)
 
-            self.validate_python(changed_paths)
+            self.validate_changed_files(changed_paths)
             return changed_paths, backup_dir
         except Exception:
             for target in changed_paths:
@@ -119,11 +119,19 @@ Rules:
             raise
 
     @staticmethod
-    def validate_python(paths):
+    def validate_changed_files(paths):
         temp_dir = tempfile.mkdtemp(prefix="autodoc-vibe-")
         try:
             for path in paths:
                 if path.suffix == ".py":
                     py_compile.compile(str(path), doraise=True, cfile=os.path.join(temp_dir, path.name + "c"))
+                elif path.suffix == ".json":
+                    json.loads(path.read_text(encoding="utf-8"))
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+    @staticmethod
+    def run_post_apply_checks(paths):
+        """Run deterministic checks without executing arbitrary project commands."""
+        VibeCoder.validate_changed_files(paths)
+        return [path.name for path in paths]
