@@ -81,11 +81,11 @@ class PublicApp(tk.Tk):
 
         ttk.Label(sidebar, text="AutoDoc", style="Sidebar.TLabel", font=("Segoe UI", 20, "bold")).pack(anchor="w", padx=22, pady=(28, 2))
         ttk.Label(sidebar, text="PUBLIC EDITION", style="Sidebar.TLabel", font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=24, pady=(0, 35))
-        for label, page in (("Dashboard", self.show_dashboard), ("Focus Session", self.show_session), ("Work Shift", self.show_shift), ("Continue", self.show_continue), ("Manual Log", self.show_manual_log), ("Logs", self.show_logs), ("Vibe Code", self.show_vibe_code), ("Settings", self.show_settings)):
+        for label, page in (("Project Hub", self.show_project_hub), ("Focus Session", self.show_session), ("Work Shift", self.show_shift), ("Journal", self.show_logs), ("Vibe Code", self.show_vibe_code), ("Settings", self.show_settings)):
             button = ttk.Button(sidebar, text=label, style="Nav.TButton", command=page)
             button.pack(fill="x", padx=10, pady=2)
             self.nav_buttons.append((button, label))
-        self.project_button = ttk.Button(sidebar, text="Choose project", style="Nav.TButton", command=self.choose_project)
+        self.project_button = ttk.Button(sidebar, text="Project menu", style="Nav.TButton", command=self.show_project_menu)
         self.project_button.pack(fill="x", padx=10, pady=(18, 2))
         ttk.Button(sidebar, text="Push journal", style="Nav.TButton", command=self.sync_to_github).pack(fill="x", padx=10, pady=2)
         self.sidebar_note = ttk.Label(sidebar, text="LOCAL-FIRST\nNo API key required", style="Sidebar.TLabel", justify="left")
@@ -122,7 +122,7 @@ class PublicApp(tk.Tk):
         self.sidebar.configure(width=230 if self.sidebar_open else 58)
         for button, label in self.nav_buttons:
             button.configure(text=label if self.sidebar_open else label[:1])
-        self.project_button.configure(text="Choose project" if self.sidebar_open else "+")
+        self.project_button.configure(text="Project menu" if self.sidebar_open else "+")
         self.sidebar_note.configure(text="LOCAL-FIRST\nNo API key required" if self.sidebar_open else "LOCAL")
 
     def clear_content(self):
@@ -134,8 +134,11 @@ class PublicApp(tk.Tk):
         ttk.Label(self.page_content, text=subtitle, style="Subtitle.TLabel").pack(anchor="w", pady=(4, 24))
 
     def show_dashboard(self):
+        self.show_project_hub()
+
+    def show_project_hub(self):
         self.clear_content()
-        self.page_header("Good to see you.", "Your engineering workspace, kept simple and local.")
+        self.page_header("Project hub", "Choose what to work on, see today's plan, and keep the journal moving.")
         stats = public_cli.load_stats()
         cards = ttk.Frame(self.page_content, style="App.TFrame")
         cards.pack(fill="x")
@@ -153,7 +156,120 @@ class PublicApp(tk.Tk):
         status = "A session is in progress." if active else "Ready for a focused session."
         ttk.Label(activity, text=status, style="Body.TLabel").pack(anchor="w", pady=(10, 18))
         ttk.Label(activity, text=f"Project folder: {Path.cwd()}", style="Body.TLabel", wraplength=620).pack(anchor="w", pady=(0, 18))
-        ttk.Button(activity, text="Open Session", style="Primary.TButton", command=self.show_session).pack(anchor="w")
+        plan = public_cli.load_project_plan()
+        if plan:
+            ttk.Label(activity, text=f"Today's suggested focus: {plan.get('daily_plan', 'Review the project plan and choose one next step.')}", style="Body.TLabel", wraplength=620).pack(anchor="w", pady=(0, 18))
+        ttk.Button(activity, text="Open project menu", style="Primary.TButton", command=self.show_project_menu).pack(anchor="w")
+
+    def show_project_menu(self):
+        dialog = tk.Toplevel(self)
+        dialog.title("Project menu")
+        dialog.geometry("460x340")
+        dialog.transient(self)
+        dialog.grab_set()
+        shell = ttk.Frame(dialog, style="App.TFrame", padding=28)
+        shell.pack(fill="both", expand=True)
+        ttk.Label(shell, text="Project menu", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(shell, text=f"Current project\n{Path.cwd()}", style="Subtitle.TLabel", wraplength=390).pack(anchor="w", pady=(6, 24))
+        ttk.Button(shell, text="Create new project", style="Primary.TButton", command=lambda: (dialog.destroy(), self.create_project())).pack(fill="x", pady=4)
+        ttk.Button(shell, text="Open existing project", style="Secondary.TButton", command=lambda: (dialog.destroy(), self.choose_project())).pack(fill="x", pady=4)
+        ttk.Button(shell, text="View project plan", style="Secondary.TButton", command=lambda: (dialog.destroy(), self.show_project_plan())).pack(fill="x", pady=4)
+        ttk.Button(shell, text="Sync entire project to GitHub", style="Secondary.TButton", command=lambda: (dialog.destroy(), self.sync_project_to_github())).pack(fill="x", pady=4)
+        ttk.Button(shell, text="Close", style="Secondary.TButton", command=dialog.destroy).pack(anchor="e", pady=(20, 0))
+
+    def sync_project_to_github(self):
+        try:
+            status = subprocess.run(["git", "status", "--short"], capture_output=True, text=True, check=True)
+        except (OSError, subprocess.CalledProcessError) as error:
+            messagebox.showerror("GitHub sync", f"Could not inspect this project: {error}")
+            return
+        changes = status.stdout.strip() or "No local changes detected."
+        if not messagebox.askyesno("Review project sync", f"Files currently changed:\n\n{changes}\n\nContinue to sync the entire project?\nAutoDoc will create a backup first."):
+            return
+        if not messagebox.askyesno("Confirm project sync", "Stage all reviewed project changes, commit them, and push to GitHub?"):
+            return
+        try:
+            backup_dir = public_cli.backup_journal()
+            subprocess.run(["git", "add", "-A"], check=True)
+            subprocess.run(["git", "commit", "-m", "AutoDoc project sync"], check=True)
+            subprocess.run(["git", "push"], check=True)
+            messagebox.showinfo("Project synced", f"The project was pushed to GitHub.\nBackup: {backup_dir}")
+        except (OSError, subprocess.CalledProcessError) as error:
+            messagebox.showerror("Project sync failed", str(error))
+
+    def create_project(self):
+        dialog = tk.Toplevel(self)
+        dialog.title("Create project")
+        dialog.geometry("700x620")
+        dialog.transient(self)
+        dialog.grab_set()
+        shell = ttk.Frame(dialog, style="App.TFrame", padding=28)
+        shell.pack(fill="both", expand=True)
+        ttk.Label(shell, text="Create a project", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(shell, text="Start from scratch or describe the finished project and AutoDoc will shape the daily plan.", style="Subtitle.TLabel", wraplength=620).pack(anchor="w", pady=(6, 18))
+        ttk.Label(shell, text="Project folder", style="Body.TLabel").pack(anchor="w")
+        folder = tk.StringVar()
+        row = ttk.Frame(shell, style="App.TFrame")
+        row.pack(fill="x", pady=(4, 12))
+        ttk.Entry(row, textvariable=folder).pack(side="left", fill="x", expand=True)
+        ttk.Button(row, text="Browse", command=lambda: folder.set(filedialog.askdirectory(title="Choose new project location") or folder.get())).pack(side="right", padx=(8, 0))
+        ttk.Label(shell, text="Starting point", style="Body.TLabel").pack(anchor="w")
+        kind = tk.StringVar(value="scratch")
+        ttk.Radiobutton(shell, text="Blank project", variable=kind, value="scratch").pack(anchor="w")
+        ttk.Radiobutton(shell, text="New project with a plan", variable=kind, value="planned").pack(anchor="w", pady=(0, 12))
+        ttk.Label(shell, text="Project plan and intended outcome", style="Body.TLabel").pack(anchor="w")
+        plan_text = tk.Text(shell, height=12, wrap="word", font=("Segoe UI", 10))
+        plan_text.pack(fill="both", expand=True, pady=(4, 14))
+        ttk.Button(shell, text="Create and open", style="Primary.TButton", command=lambda: self.finish_project_creation(dialog, folder, kind, plan_text)).pack(anchor="e")
+
+    def finish_project_creation(self, dialog, folder, kind, plan_text):
+        project = folder.get().strip()
+        if not project:
+            messagebox.showwarning("Create project", "Choose a project folder first.")
+            return
+        try:
+            project_path = Path(project)
+            project_path.mkdir(parents=True, exist_ok=True)
+            os.chdir(project_path)
+            public_cli.STATE_DIR = project_path / ".autodoc-public"
+            public_cli.SESSION_FILE = public_cli.STATE_DIR / "session.json"
+            public_cli.SHIFT_FILE = public_cli.STATE_DIR / "shift.json"
+            public_cli.PROJECT_PLAN_FILE = public_cli.STATE_DIR / "project_plan.json"
+            public_cli.STATS_FILE = public_cli.STATE_DIR / "stats.json"
+            public_cli.LOG_DIR = project_path / "logs"
+            public_cli.SCREENSHOT_DIR = project_path / "screenshots"
+            public_cli.STATE_DIR.mkdir(exist_ok=True)
+            raw_plan = plan_text.get("1.0", "end").strip()
+            daily_plan = "Choose one small, verifiable next step and record what changed." if kind.get() == "scratch" or not raw_plan else self.generate_daily_plan(raw_plan)
+            public_cli.save_project_plan({"type": kind.get(), "plan": raw_plan or "Blank project", "daily_plan": daily_plan, "created_at": datetime.now().isoformat(timespec="seconds")})
+            global SETTINGS_FILE
+            SETTINGS_FILE = public_cli.STATE_DIR / "settings.json"
+            self.settings = self.load_settings()
+            dialog.destroy()
+            self.show_project_hub()
+        except OSError as error:
+            messagebox.showerror("Create project", str(error))
+
+    def generate_daily_plan(self, plan):
+        if not self.settings.get("gemini_api_key") or genai is None:
+            return "Break the project plan into one concrete outcome for today, then log the result and the next open question."
+        try:
+            client = genai.Client(api_key=self.settings["gemini_api_key"])
+            response = client.models.generate_content(model="gemini-2.5-flash", contents="Turn this project plan into one concise daily engineering focus with a measurable finish line:\n\n" + plan)
+            return response.text.strip()
+        except Exception:
+            return "Break the project plan into one concrete outcome for today, then log the result and the next open question."
+
+    def show_project_plan(self):
+        self.clear_content()
+        self.page_header("Project plan", "The project outcome and today's suggested finish line.")
+        plan = public_cli.load_project_plan() or {"plan": "No project plan yet.", "daily_plan": "Create a project plan from the Project menu."}
+        card = ttk.Frame(self.page_content, style="Card.TFrame", padding=24)
+        card.pack(fill="both", expand=True)
+        ttk.Label(card, text="Project outcome", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(card, text=plan.get("plan", "No project plan yet."), style="Body.TLabel", wraplength=680).pack(anchor="w", pady=(8, 24))
+        ttk.Label(card, text="Today's focus", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(card, text=plan.get("daily_plan", "Create a project plan from the Project menu."), style="Body.TLabel", wraplength=680).pack(anchor="w", pady=(8, 0))
 
     def show_onboarding_if_needed(self):
         if not self.settings.get("onboarding_complete"):
@@ -212,6 +328,8 @@ class PublicApp(tk.Tk):
             public_cli.STATE_DIR = Path(project) / ".autodoc-public"
             public_cli.SESSION_FILE = public_cli.STATE_DIR / "session.json"
             public_cli.STATS_FILE = public_cli.STATE_DIR / "stats.json"
+            public_cli.SHIFT_FILE = public_cli.STATE_DIR / "shift.json"
+            public_cli.PROJECT_PLAN_FILE = public_cli.STATE_DIR / "project_plan.json"
             public_cli.LOG_DIR = Path(project) / "logs"
             public_cli.SCREENSHOT_DIR = Path(project) / "screenshots"
             global SETTINGS_FILE
@@ -266,6 +384,7 @@ class PublicApp(tk.Tk):
         self.notes = tk.StringVar()
         self.planned = tk.IntVar(value=60)
         self.live_monitoring = tk.BooleanVar(value=False)
+        self.evidence_capture_active = False
         for label, variable in (("Session goal", self.goal), ("Definition of done", self.done), ("Notes", self.notes)):
             ttk.Label(form, text=label, style="Body.TLabel").pack(anchor="w", pady=(0, 4))
             ttk.Entry(form, textvariable=variable).pack(fill="x", pady=(0, 14))
@@ -274,6 +393,7 @@ class PublicApp(tk.Tk):
         ttk.Checkbutton(form, text="Enable live monitoring for this session", variable=self.live_monitoring).pack(anchor="w", pady=(0, 12))
         ttk.Label(form, text="Monitoring is off until you explicitly enable it. Screenshots are always manual.", style="Body.TLabel").pack(anchor="w", pady=(0, 14))
         ttk.Button(form, text="Take screenshot", style="Secondary.TButton", command=self.capture_selected_screenshot).pack(anchor="w", pady=(0, 16))
+        ttk.Button(form, text="Start evidence capture", style="Secondary.TButton", command=self.toggle_evidence_capture).pack(anchor="w", pady=(0, 16))
         if public_cli.SESSION_FILE.exists():
             ttk.Button(form, text="Finish session", style="Primary.TButton", command=self.finish_session).pack(anchor="w")
             ttk.Label(form, text="Active session found. Finish it to write the Markdown log.", style="Body.TLabel").pack(anchor="w", pady=(12, 0))
@@ -290,6 +410,27 @@ class PublicApp(tk.Tk):
         messagebox.showinfo("Session started", "Your focus session is now active.")
         self.update_timer()
         self.show_session()
+
+    def toggle_evidence_capture(self):
+        self.evidence_capture_active = not self.evidence_capture_active
+        if self.evidence_capture_active:
+            messagebox.showinfo("Evidence capture active", "AutoDoc will save a screenshot every 30 seconds until you stop it. No capture happens before this button is pressed.")
+            self.capture_evidence_frame()
+        else:
+            messagebox.showinfo("Evidence capture stopped", "The evidence screenshot timeline is saved in this project's screenshots folder.")
+
+    def capture_evidence_frame(self):
+        if not self.evidence_capture_active:
+            return
+        now = datetime.now()
+        filename = f"evidence_{now.strftime('%Y-%m-%d_%H%M%S')}.png"
+        path = public_cli.SCREENSHOT_DIR / filename
+        try:
+            public_cli.capture_screenshot(path)
+            self.after(30000, self.capture_evidence_frame)
+        except Exception as error:
+            self.evidence_capture_active = False
+            messagebox.showerror("Evidence capture failed", str(error))
 
     def finish_session(self):
         try:
@@ -313,14 +454,11 @@ class PublicApp(tk.Tk):
 
     def show_shift(self):
         self.clear_content()
-        self.page_header("Work shift", "A simple clock-in, notepad, and end-of-shift journal.")
+        self.page_header("Work journal", "One simple daily page for clocking in, writing, and clocking out.")
         panel = ttk.Frame(self.page_content, style="Card.TFrame", padding=24)
         panel.pack(fill="both", expand=True)
-        ttk.Label(panel, text="Engineering shift mode", style="CardTitle.TLabel").pack(anchor="w")
-        ttk.Label(panel, text="Use this mode for the whole workday. It stays separate from focused sessions and does not create another project.", style="Body.TLabel", wraplength=650).pack(anchor="w", pady=(8, 18))
-        self.shift_goal = tk.StringVar()
-        ttk.Label(panel, text="What is today's shift about?", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
-        ttk.Entry(panel, textvariable=self.shift_goal).pack(fill="x", pady=(0, 12))
+        ttk.Label(panel, text="Today's work", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(panel, text="Paste notes from your notepad as you go. AutoDoc will turn the page into a reviewed journal when you clock out.", style="Body.TLabel", wraplength=650).pack(anchor="w", pady=(8, 18))
         ttk.Label(panel, text="Shift notes", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
         self.shift_notes = tk.Text(panel, height=12, wrap="word", font=("Segoe UI", 10))
         self.shift_notes.pack(fill="both", expand=True, pady=(0, 14))
@@ -334,7 +472,7 @@ class PublicApp(tk.Tk):
         if public_cli.SESSION_FILE.exists():
             messagebox.showwarning("Focus session active", "Finish the focus session before clocking into a work shift.")
             return
-        public_cli.save_shift({"start_time": datetime.now().isoformat(timespec="seconds"), "goal": self.shift_goal.get().strip()})
+        public_cli.save_shift({"start_time": datetime.now().isoformat(timespec="seconds"), "goal": "Daily work journal"})
         messagebox.showinfo("Shift started", "You are clocked in. Add notes as the day unfolds.")
         self.show_shift()
 
@@ -633,8 +771,7 @@ RECENT JOURNAL CONTEXT:
         controls = ttk.Frame(panel, style="Card.TFrame")
         controls.pack(fill="x")
         self.vibe_mode = tk.StringVar(value="propose")
-        ttk.Radiobutton(controls, text="Explain", variable=self.vibe_mode, value="explain").pack(side="left", padx=(0, 12))
-        ttk.Radiobutton(controls, text="Propose changes", variable=self.vibe_mode, value="propose").pack(side="left", padx=(0, 12))
+        ttk.Button(controls, text="Surprise me", style="Secondary.TButton", command=self.suggest_random_feature).pack(side="left")
         ttk.Button(controls, text="Ask Gemini", style="Primary.TButton", command=self.ask_vibe).pack(side="right")
         ttk.Label(panel, text="Proposal preview", style="CardTitle.TLabel").pack(anchor="w", pady=(22, 8))
         self.vibe_output = tk.Text(panel, height=14, wrap="word", state="disabled", font=("Consolas", 9))
@@ -642,6 +779,17 @@ RECENT JOURNAL CONTEXT:
         self.apply_vibe_button = ttk.Button(panel, text="Apply approved changes", style="Secondary.TButton", command=self.apply_vibe, state="disabled")
         self.apply_vibe_button.pack(anchor="w", pady=(14, 0))
         self.vibe_proposal = None
+        self.vibe_loading = False
+
+    def suggest_random_feature(self):
+        ideas = (
+            "Add a small dashboard view for the most common task in this project.",
+            "Improve the project's error messages and make one failure easier to recover from.",
+            "Add a useful keyboard shortcut or command for the most repeated workflow.",
+            "Create a lightweight health check that proves the project is working.",
+        )
+        self.vibe_request.delete("1.0", "end")
+        self.vibe_request.insert("1.0", ideas[int(time.time()) % len(ideas)])
 
     def set_vibe_output(self, text):
         self.vibe_output.configure(state="normal")
@@ -657,7 +805,11 @@ RECENT JOURNAL CONTEXT:
         if not request:
             messagebox.showwarning("Vibe Code", "Describe the feature you want to build first.")
             return
-        self.set_vibe_output("Gemini is reviewing the project...\n")
+        if self.vibe_loading:
+            return
+        self.vibe_loading = True
+        self.apply_vibe_button.configure(state="disabled")
+        self.set_vibe_output("Gemini is reviewing the project...\nPlease wait; actions are paused until the proposal is ready.")
         threading.Thread(target=self.request_vibe, args=(request, self.vibe_mode.get()), daemon=True).start()
 
     def request_vibe(self, request, mode):
@@ -666,10 +818,15 @@ RECENT JOURNAL CONTEXT:
             proposal = coder.propose(request, mode)
             self.after(0, lambda: self.show_vibe_proposal(proposal))
         except Exception as error:
-            self.after(0, lambda: self.set_vibe_output(f"Proposal failed:\n{error}"))
+            self.after(0, lambda: self.finish_vibe_loading(f"Proposal failed:\n{error}"))
+
+    def finish_vibe_loading(self, text):
+        self.vibe_loading = False
+        self.set_vibe_output(text)
 
     def show_vibe_proposal(self, proposal):
         self.vibe_proposal = proposal
+        self.vibe_loading = False
         files = "\n".join(f"- {item['action']}: {item['path']}" for item in proposal["files"])
         preview = f"{proposal.get('summary', 'Proposal ready.')}\n\nFiles:\n{files}\n\nNotes:\n{proposal.get('notes', 'None')}"
         self.set_vibe_output(preview)

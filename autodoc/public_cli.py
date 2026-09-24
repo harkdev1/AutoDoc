@@ -16,6 +16,7 @@ SHIFT_FILE = STATE_DIR / "shift.json"
 STATS_FILE = STATE_DIR / "stats.json"
 LOG_DIR = Path("logs")
 SCREENSHOT_DIR = Path("screenshots")
+PROJECT_PLAN_FILE = STATE_DIR / "project_plan.json"
 
 
 def save_shift(shift):
@@ -30,6 +31,20 @@ def load_shift():
         return json.loads(SHIFT_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         raise click.ClickException(f"Invalid shift file: {SHIFT_FILE}")
+
+
+def save_project_plan(plan):
+    STATE_DIR.mkdir(exist_ok=True)
+    PROJECT_PLAN_FILE.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+
+
+def load_project_plan():
+    if not PROJECT_PLAN_FILE.exists():
+        return None
+    try:
+        return json.loads(PROJECT_PLAN_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raise click.ClickException(f"Invalid project plan: {PROJECT_PLAN_FILE}")
 
 
 def backup_journal():

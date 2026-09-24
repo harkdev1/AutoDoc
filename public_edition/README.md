@@ -33,7 +33,7 @@ Your existing developer AutoDoc state is not used.
 - **Dashboard**: See sessions, minutes, days logged, and the current project.
 - **Focus Session**: Start a timer-based work session, capture optional screenshots, and finish it into a Markdown log.
 - **Work Shift**: Clock in for a workday, keep a running notepad, and clock out into an AI-reviewed journal entry.
-- **Continue**: Paste or import a rough note and turn it into an editable continuation based on recent journal context.
+- **Project Hub**: Create or open projects, see the daily focus, and sync the full project to GitHub after review.
 - **Manual Log**: Record one piece of work without starting a session or timer.
 - **Logs**: Read every local Markdown log inside the app.
 - **Vibe Code**: Ask Gemini for a proposed feature, review the files, and apply only approved changes.
@@ -56,6 +56,9 @@ Use **Focus Session** when you want a live timer:
 5. Finish the session and review the generated entry.
 
 Screenshots are manual and can capture all displays or one selected monitor.
+
+Focus sessions also offer explicit evidence capture, which saves a screenshot every
+30 seconds only after you start it. AutoDoc never records in the background.
 
 Use **Work Shift** when you want a broader workday journal. Clock in, paste or
 type notes throughout the day, then clock out to review an AI-generated journal
@@ -84,6 +87,9 @@ The **Sync to GitHub** action uses two confirmations: first review changed files
 then confirm staging Markdown logs, committing, and pushing. It does not silently
 sync the entire project. A timestamped backup of the journal, statistics, and
 active shift state is created under `.autodoc-public/backups/` before staging.
+
+The **Project menu** also offers full-project sync. This uses the same review and
+confirmation steps, but stages all reviewed project changes instead of only logs.
 
 ## Vibe Code Safety
 
