@@ -13,6 +13,7 @@ except ImportError:
 
 
 MAX_FILE_BYTES = 200_000
+MAX_CONTEXT_BYTES = 80_000
 IGNORED_NAMES = {".git", ".venv", "venv", "node_modules", ".autodoc", ".autodoc-public", "__pycache__"}
 
 
@@ -23,6 +24,7 @@ class VibeCoder:
 
     def collect_context(self):
         files = []
+        total_bytes = 0
         for path in self.project_root.rglob("*"):
             if not path.is_file() or any(part in IGNORED_NAMES for part in path.parts):
                 continue
@@ -32,7 +34,12 @@ class VibeCoder:
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
-            files.append(f"FILE: {path.relative_to(self.project_root).as_posix()}\n{text}")
+            entry = f"FILE: {path.relative_to(self.project_root).as_posix()}\n{text}"
+            entry_bytes = len(entry.encode("utf-8"))
+            if total_bytes + entry_bytes > MAX_CONTEXT_BYTES:
+                continue
+            files.append(entry)
+            total_bytes += entry_bytes
         return "\n\n".join(files)
 
     def propose(self, request, mode="propose"):
@@ -68,6 +75,8 @@ Rules:
 """
         client = genai.Client(api_key=self.api_key)
         response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        if not response.text:
+            raise ValueError("Gemini returned an empty proposal. Try a smaller request.")
         return self.parse_proposal(response.text)
 
     @staticmethod
@@ -75,7 +84,17 @@ Rules:
         cleaned = text.strip()
         if cleaned.startswith("```"):
             cleaned = cleaned.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        proposal = json.loads(cleaned)
+        try:
+            proposal = json.loads(cleaned)
+        except json.JSONDecodeError:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start < 0 or end <= start:
+                raise ValueError("Gemini did not return a JSON proposal. Try describing one smaller change.")
+            try:
+                proposal = json.loads(cleaned[start:end + 1])
+            except json.JSONDecodeError as error:
+                raise ValueError(f"Gemini returned malformed JSON: {error.msg}") from error
         if not isinstance(proposal.get("files"), list):
             raise ValueError("Gemini returned no valid file list.")
         for item in proposal["files"]:
