@@ -29,7 +29,7 @@ except ImportError:
 SETTINGS_FILE = public_cli.STATE_DIR / "settings.json"
 UPDATE_API_URL = os.getenv(
     "AUTODOC_UPDATE_API_URL",
-    "https://api.github.com/repos/harkdev1/AutoDoc-Public-Edition/releases/latest",
+    "https://api.github.com/repos/harkdev1/AutoDoc/releases/latest",
 )
 GITHUB_CLIENT_ID = os.getenv("AUTODOC_GITHUB_CLIENT_ID", "")
 
