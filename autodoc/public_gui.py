@@ -2,6 +2,8 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import sys
+import tempfile
 import time
 import threading
 import subprocess
@@ -10,15 +12,13 @@ import urllib.parse
 import urllib.request
 import webbrowser
 import tkinter as tk
+import ctypes
+from ctypes import wintypes
 from tkinter import messagebox, ttk
 from tkinter import filedialog
 
-try:
-    from autodoc import public_cli
-    from autodoc.public_vibe import VibeCoder
-except ImportError:
-    import public_cli
-    from public_vibe import VibeCoder
+from autodoc import public_cli
+from autodoc.public_vibe import VibeCoder
 
 try:
     from google import genai
@@ -45,6 +45,7 @@ class PublicApp(tk.Tk):
         self.session = None
         self.sidebar_open = True
         self.nav_buttons = []
+        self.update_alert_checked = False
         self.settings = self.load_settings()
         self.configure_styles()
         self.build_layout()
@@ -68,9 +69,9 @@ class PublicApp(tk.Tk):
         style.configure("Body.TLabel", background="#ffffff", foreground="#42506a", font=("Segoe UI", 10))
         style.configure("Nav.TButton", background="#111827", foreground="#dbe5f5", borderwidth=0, anchor="w", padding=13, font=("Segoe UI", 10, "bold"))
         style.map("Nav.TButton", background=[("active", "#253451")])
-        style.configure("Primary.TButton", background="#287a63", foreground="#ffffff", padding=11, borderwidth=0, font=("Segoe UI", 10, "bold"))
+        style.configure("Primary.TButton", background="#287a63", foreground="#ffffff", padding=11, borderwidth=0, relief="flat", font=("Segoe UI", 10, "bold"))
         style.map("Primary.TButton", background=[("active", "#1f624f")])
-        style.configure("Secondary.TButton", background="#e8edf5", foreground="#263754", padding=9, borderwidth=0)
+        style.configure("Secondary.TButton", background="#e8edf5", foreground="#263754", padding=9, borderwidth=0, relief="flat")
 
     def build_layout(self):
         self.sidebar = ttk.Frame(self, style="Sidebar.TFrame", width=230)
@@ -80,12 +81,13 @@ class PublicApp(tk.Tk):
 
         ttk.Label(sidebar, text="AutoDoc", style="Sidebar.TLabel", font=("Segoe UI", 20, "bold")).pack(anchor="w", padx=22, pady=(28, 2))
         ttk.Label(sidebar, text="PUBLIC EDITION", style="Sidebar.TLabel", font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=24, pady=(0, 35))
-        for label, page in (("Dashboard", self.show_dashboard), ("Session", self.show_session), ("Manual Log", self.show_manual_log), ("Logs", self.show_logs), ("Vibe Code", self.show_vibe_code), ("Settings", self.show_settings)):
+        for label, page in (("Dashboard", self.show_dashboard), ("Focus Session", self.show_session), ("Work Shift", self.show_shift), ("Continue", self.show_continue), ("Manual Log", self.show_manual_log), ("Logs", self.show_logs), ("Vibe Code", self.show_vibe_code), ("Settings", self.show_settings)):
             button = ttk.Button(sidebar, text=label, style="Nav.TButton", command=page)
             button.pack(fill="x", padx=10, pady=2)
             self.nav_buttons.append((button, label))
         self.project_button = ttk.Button(sidebar, text="Choose project", style="Nav.TButton", command=self.choose_project)
         self.project_button.pack(fill="x", padx=10, pady=(18, 2))
+        ttk.Button(sidebar, text="Push journal", style="Nav.TButton", command=self.sync_to_github).pack(fill="x", padx=10, pady=2)
         self.sidebar_note = ttk.Label(sidebar, text="LOCAL-FIRST\nNo API key required", style="Sidebar.TLabel", justify="left")
         self.sidebar_note.pack(side="bottom", anchor="w", padx=24, pady=24)
 
@@ -93,13 +95,27 @@ class PublicApp(tk.Tk):
         self.content.pack(side="left", fill="both", expand=True)
         topbar = ttk.Frame(self.content, style="Topbar.TFrame", padding=(14, 10))
         topbar.pack(fill="x", pady=(0, 24))
-        ttk.Button(topbar, text="Menu", style="Secondary.TButton", command=self.toggle_sidebar).pack(side="left")
+        ttk.Button(topbar, text="...", width=4, style="Secondary.TButton", command=self.toggle_sidebar).pack(side="left")
         self.timer_label = ttk.Label(topbar, text="No active session", style="Timer.TLabel")
         self.timer_label.pack(side="right")
-        self.page_content = ttk.Frame(self.content, style="App.TFrame")
-        self.page_content.pack(fill="both", expand=True)
+        viewport = ttk.Frame(self.content, style="App.TFrame")
+        viewport.pack(fill="both", expand=True)
+        self.page_canvas = tk.Canvas(viewport, background="#f4f6fb", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(viewport, orient="vertical", command=self.page_canvas.yview)
+        self.page_canvas.configure(yscrollcommand=scrollbar.set)
+        self.page_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.page_content = ttk.Frame(self.page_canvas, style="App.TFrame")
+        self.page_window = self.page_canvas.create_window((0, 0), window=self.page_content, anchor="nw")
+        self.page_content.bind("<Configure>", lambda _event: self.page_canvas.configure(scrollregion=self.page_canvas.bbox("all")))
+        self.page_canvas.bind("<Configure>", lambda event: self.page_canvas.itemconfigure(self.page_window, width=event.width))
+        self.page_canvas.bind_all("<MouseWheel>", self.scroll_page)
         self.show_dashboard()
         self.update_timer()
+        self.after(1400, self.check_updates_on_startup)
+
+    def scroll_page(self, event):
+        self.page_canvas.yview_scroll(int(-event.delta / 120), "units")
 
     def toggle_sidebar(self):
         self.sidebar_open = not self.sidebar_open
@@ -203,6 +219,43 @@ class PublicApp(tk.Tk):
             self.settings = self.load_settings()
             self.show_dashboard()
 
+    @staticmethod
+    def monitor_bounds():
+        monitors = []
+        user32 = ctypes.windll.user32
+        monitor_enum_proc = ctypes.WINFUNCTYPE(ctypes.c_int, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+
+        def callback(_monitor, _dc, rect, _data):
+            monitors.append((rect.contents.left, rect.contents.top, rect.contents.right, rect.contents.bottom))
+            return 1
+
+        user32.EnumDisplayMonitors(0, 0, monitor_enum_proc(callback), 0)
+        return monitors or [(0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1))]
+
+    def capture_selected_screenshot(self):
+        choices = ["All monitors"] + [f"Monitor {index}" for index in range(1, len(self.monitor_bounds()) + 1)]
+        dialog = tk.Toplevel(self)
+        dialog.title("Capture screenshot")
+        dialog.transient(self)
+        dialog.grab_set()
+        ttk.Label(dialog, text="Which display should be captured?", padding=16).pack(anchor="w")
+        selected = tk.StringVar(value=choices[0])
+        ttk.Combobox(dialog, textvariable=selected, values=choices, state="readonly", width=28).pack(padx=16, pady=(0, 16))
+        ttk.Button(dialog, text="Capture", style="Primary.TButton", command=dialog.destroy).pack(anchor="e", padx=16, pady=(0, 16))
+        self.wait_window(dialog)
+        if not selected.get():
+            return
+        now = datetime.now()
+        filename = f"public_{now.strftime('%Y-%m-%d_%H%M%S')}.png"
+        path = public_cli.SCREENSHOT_DIR / filename
+        try:
+            bounds = None if selected.get() == "All monitors" else self.monitor_bounds()[choices.index(selected.get()) - 1]
+            public_cli.capture_screenshot(path, bounds)
+            log_file = public_cli.append_log(f"\n### Screenshot captured at {now.strftime('%H:%M:%S')}\n![Screenshot](../screenshots/{filename})\n", now.strftime("%Y-%m-%d"))
+            messagebox.showinfo("Screenshot saved", f"Saved to {path}\nJournal updated: {log_file}")
+        except Exception as error:
+            messagebox.showerror("Screenshot failed", str(error))
+
     def show_session(self):
         self.clear_content()
         self.page_header("Focus session", "Capture the work while it is happening.")
@@ -212,11 +265,15 @@ class PublicApp(tk.Tk):
         self.done = tk.StringVar()
         self.notes = tk.StringVar()
         self.planned = tk.IntVar(value=60)
+        self.live_monitoring = tk.BooleanVar(value=False)
         for label, variable in (("Session goal", self.goal), ("Definition of done", self.done), ("Notes", self.notes)):
             ttk.Label(form, text=label, style="Body.TLabel").pack(anchor="w", pady=(0, 4))
             ttk.Entry(form, textvariable=variable).pack(fill="x", pady=(0, 14))
         ttk.Label(form, text="Planned minutes", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
         ttk.Spinbox(form, from_=1, to=1440, textvariable=self.planned, width=10).pack(anchor="w", pady=(0, 20))
+        ttk.Checkbutton(form, text="Enable live monitoring for this session", variable=self.live_monitoring).pack(anchor="w", pady=(0, 12))
+        ttk.Label(form, text="Monitoring is off until you explicitly enable it. Screenshots are always manual.", style="Body.TLabel").pack(anchor="w", pady=(0, 14))
+        ttk.Button(form, text="Take screenshot", style="Secondary.TButton", command=self.capture_selected_screenshot).pack(anchor="w", pady=(0, 16))
         if public_cli.SESSION_FILE.exists():
             ttk.Button(form, text="Finish session", style="Primary.TButton", command=self.finish_session).pack(anchor="w")
             ttk.Label(form, text="Active session found. Finish it to write the Markdown log.", style="Body.TLabel").pack(anchor="w", pady=(12, 0))
@@ -225,7 +282,10 @@ class PublicApp(tk.Tk):
 
     def start_session(self):
         public_cli.STATE_DIR.mkdir(exist_ok=True)
-        session = {"start_time": datetime.now().isoformat(timespec="seconds"), "goal": self.goal.get(), "definition_of_done": self.done.get(), "blockers": "", "planned_minutes": self.planned.get()}
+        if public_cli.SHIFT_FILE.exists():
+            messagebox.showwarning("Work shift active", "Clock out of your work shift before starting a focus session.")
+            return
+        session = {"start_time": datetime.now().isoformat(timespec="seconds"), "goal": self.goal.get(), "definition_of_done": self.done.get(), "blockers": "", "planned_minutes": self.planned.get(), "live_monitoring": self.live_monitoring.get()}
         public_cli.SESSION_FILE.write_text(json.dumps(session, indent=2) + "\n", encoding="utf-8")
         messagebox.showinfo("Session started", "Your focus session is now active.")
         self.update_timer()
@@ -251,13 +311,63 @@ class PublicApp(tk.Tk):
         except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             messagebox.showerror("Could not finish session", str(error))
 
+    def show_shift(self):
+        self.clear_content()
+        self.page_header("Work shift", "A simple clock-in, notepad, and end-of-shift journal.")
+        panel = ttk.Frame(self.page_content, style="Card.TFrame", padding=24)
+        panel.pack(fill="both", expand=True)
+        ttk.Label(panel, text="Engineering shift mode", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(panel, text="Use this mode for the whole workday. It stays separate from focused sessions and does not create another project.", style="Body.TLabel", wraplength=650).pack(anchor="w", pady=(8, 18))
+        self.shift_goal = tk.StringVar()
+        ttk.Label(panel, text="What is today's shift about?", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
+        ttk.Entry(panel, textvariable=self.shift_goal).pack(fill="x", pady=(0, 12))
+        ttk.Label(panel, text="Shift notes", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
+        self.shift_notes = tk.Text(panel, height=12, wrap="word", font=("Segoe UI", 10))
+        self.shift_notes.pack(fill="both", expand=True, pady=(0, 14))
+        if public_cli.SHIFT_FILE.exists():
+            ttk.Button(panel, text="Clock out and journal shift", style="Primary.TButton", command=self.finish_shift).pack(anchor="w")
+            ttk.Label(panel, text="Shift active. Add notes throughout the day, then clock out when finished.", style="Body.TLabel").pack(anchor="w", pady=(12, 0))
+        else:
+            ttk.Button(panel, text="Clock in", style="Primary.TButton", command=self.start_shift).pack(anchor="w")
+
+    def start_shift(self):
+        if public_cli.SESSION_FILE.exists():
+            messagebox.showwarning("Focus session active", "Finish the focus session before clocking into a work shift.")
+            return
+        public_cli.save_shift({"start_time": datetime.now().isoformat(timespec="seconds"), "goal": self.shift_goal.get().strip()})
+        messagebox.showinfo("Shift started", "You are clocked in. Add notes as the day unfolds.")
+        self.show_shift()
+
+    def finish_shift(self):
+        try:
+            shift = public_cli.load_shift()
+            end_time = datetime.now()
+            start_time = datetime.fromisoformat(shift["start_time"])
+            duration = max(0, int((end_time - start_time).total_seconds() / 60))
+            notes = self.shift_notes.get("1.0", "end").strip()
+            summary = self.generate_summary(notes)
+            review = self.open_review_dialog(summary)
+            if review is None:
+                return
+            date_str = end_time.strftime("%Y-%m-%d")
+            entry = f"\n---\n\n## Work Shift - {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}\n### Focus\n{shift.get('goal') or 'Not specified'}\n\n### AI Journal\n{review}\n\n### Notes\n{notes or 'None'}\n\n### Duration\n{duration} minutes\n"
+            log_file = public_cli.append_log(entry, date_str)
+            public_cli.record_session(date_str, duration)
+            public_cli.SHIFT_FILE.unlink()
+            messagebox.showinfo("Shift saved", f"Work journal written to {log_file}")
+            self.show_logs()
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            messagebox.showerror("Could not finish shift", str(error))
+
     def load_settings(self):
         if not SETTINGS_FILE.exists():
-            return {"gemini_api_key": "", "github_username": ""}
+            return {"gemini_api_key": "", "github_username": "", "auto_update_alerts": True}
         try:
-            return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            settings = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            settings.setdefault("auto_update_alerts", True)
+            return settings
         except (OSError, json.JSONDecodeError):
-            return {"gemini_api_key": "", "github_username": ""}
+            return {"gemini_api_key": "", "github_username": "", "auto_update_alerts": True}
 
     def generate_summary(self, notes):
         if not notes or not self.settings.get("gemini_api_key") or genai is None:
@@ -269,6 +379,94 @@ class PublicApp(tk.Tk):
             return response.text.strip()
         except Exception:
             return "AI summary unavailable; local notes preserved."
+
+    def show_continue(self):
+        self.clear_content()
+        self.page_header("Continue from notes", "Bring in a rough note and turn it into the next useful step.")
+        form = ttk.Frame(self.page_content, style="Card.TFrame", padding=24)
+        form.pack(fill="both", expand=True)
+        ttk.Label(form, text="Paste a note, handoff, ticket, or scratchpad", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(form, text="AutoDoc compares it with recent journal entries, separates facts from inference, and keeps the result editable.", style="Body.TLabel", wraplength=680).pack(anchor="w", pady=(8, 12))
+        self.continue_notes = tk.Text(form, height=12, wrap="word", font=("Segoe UI", 10))
+        self.continue_notes.pack(fill="both", expand=True, pady=(0, 10))
+        actions = ttk.Frame(form, style="Card.TFrame")
+        actions.pack(fill="x")
+        ttk.Button(actions, text="Import text file", style="Secondary.TButton", command=self.import_continue_notes).pack(side="left")
+        ttk.Button(actions, text="Find where I left off", style="Primary.TButton", command=self.analyze_continuation).pack(side="right")
+        self.continue_output = None
+
+    def import_continue_notes(self):
+        path = filedialog.askopenfilename(title="Import notes", filetypes=[("Text and Markdown", "*.txt *.md"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+            self.continue_notes.delete("1.0", "end")
+            self.continue_notes.insert("1.0", text)
+        except (OSError, UnicodeDecodeError) as error:
+            messagebox.showerror("Import notes", str(error))
+
+    def build_continuation(self, notes):
+        context = public_cli.recent_journal_context()
+        if self.settings.get("gemini_api_key") and genai is not None:
+            try:
+                client = genai.Client(api_key=self.settings["gemini_api_key"])
+                prompt = """You are helping continue a personal engineering work journal.
+Use the rough note and recent journal context below. Do not invent completed work.
+Clearly label reasonable inferences. Return concise Markdown with exactly these headings:
+## Where I left off
+## Best next step
+## Inferences
+## Open questions
+Under 'Best next step', give one concrete action if the evidence supports one.
+
+ROUGH NOTE:
+{notes}
+
+RECENT JOURNAL CONTEXT:
+{context}
+""".format(notes=notes, context=context)
+                response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+                return response.text.strip()
+            except Exception:
+                pass
+        latest = context.split("\n\n", 1)[0]
+        latest_line = next((line.strip() for line in reversed(latest.splitlines()) if line.strip() and not line.startswith("#")), "No clear previous stopping point found.")
+        return f"## Where I left off\n{latest_line}\n\n## Best next step\nReview the imported note, identify the first unfinished action, and record its result.\n\n## Inferences\nNo additional facts were available, so this is a cautious workflow inference rather than a claim about completed work.\n\n## Open questions\nWhat changed after the last journal entry?\n"
+
+    def analyze_continuation(self):
+        notes = self.continue_notes.get("1.0", "end").strip()
+        if not notes:
+            messagebox.showwarning("Continue from notes", "Paste or import a note first.")
+            return
+        draft = self.build_continuation(notes)
+        self.open_continuation_review(notes, draft)
+
+    def open_continuation_review(self, notes, draft):
+        dialog = tk.Toplevel(self)
+        dialog.title("Review continuation")
+        dialog.transient(self)
+        dialog.grab_set()
+        ttk.Label(dialog, text="Edit the continuation before adding it to today's journal.", padding=16).pack(anchor="w")
+        preview = tk.Text(dialog, width=86, height=20, wrap="word")
+        preview.insert("1.0", draft)
+        preview.pack(padx=16, pady=(0, 12), fill="both", expand=True)
+        buttons = ttk.Frame(dialog, padding=(16, 0, 16, 16))
+        buttons.pack(fill="x")
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right")
+        ttk.Button(buttons, text="Add to today's journal", style="Primary.TButton", command=lambda: self.save_continuation(dialog, preview, notes)).pack(side="right", padx=(0, 8))
+
+    def save_continuation(self, dialog, preview, notes):
+        draft = preview.get("1.0", "end").strip()
+        if not draft:
+            messagebox.showwarning("Continue from notes", "The continuation cannot be empty.")
+            return
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        entry = f"\n---\n\n## Continued from imported notes\n### Imported note\n{notes}\n\n### Continuation draft\n{draft}\n"
+        log_file = public_cli.append_log(entry, date_str)
+        dialog.destroy()
+        messagebox.showinfo("Continuation saved", f"Added to {log_file}")
+        self.show_logs()
 
     def show_manual_log(self):
         self.clear_content()
@@ -340,10 +538,20 @@ class PublicApp(tk.Tk):
         body = ttk.Frame(self.page_content, style="App.TFrame")
         body.pack(fill="both", expand=True)
         files = sorted(public_cli.LOG_DIR.glob("*.md"), reverse=True) if public_cli.LOG_DIR.exists() else []
-        self.log_list = tk.Listbox(body, width=28, exportselection=False)
+        list_shell = ttk.Frame(body, style="App.TFrame")
+        list_shell.pack(side="left", fill="y")
+        self.log_list = tk.Listbox(list_shell, width=28, exportselection=False)
         self.log_list.pack(side="left", fill="y")
-        self.log_view = tk.Text(body, wrap="word", state="disabled", font=("Consolas", 10))
-        self.log_view.pack(side="left", fill="both", expand=True, padx=(12, 0))
+        list_scroll = ttk.Scrollbar(list_shell, orient="vertical", command=self.log_list.yview)
+        list_scroll.pack(side="right", fill="y")
+        self.log_list.configure(yscrollcommand=list_scroll.set)
+        view_shell = ttk.Frame(body, style="App.TFrame")
+        view_shell.pack(side="left", fill="both", expand=True, padx=(12, 0))
+        self.log_view = tk.Text(view_shell, wrap="word", state="disabled", font=("Consolas", 10))
+        self.log_view.pack(side="left", fill="both", expand=True)
+        view_scroll = ttk.Scrollbar(view_shell, orient="vertical", command=self.log_view.yview)
+        view_scroll.pack(side="right", fill="y")
+        self.log_view.configure(yscrollcommand=view_scroll.set)
         for path in files:
             self.log_list.insert("end", path.name)
         self.log_paths = files
@@ -377,10 +585,11 @@ class PublicApp(tk.Tk):
         if not messagebox.askyesno("Confirm GitHub sync", "Stage Markdown logs, create a commit, and push to the configured remote?\n\nThis is step 2 of 2."):
             return
         try:
+            backup_dir = public_cli.backup_journal()
             subprocess.run(["git", "add", "logs"], check=True)
             subprocess.run(["git", "commit", "-m", "AutoDoc public logs"], check=True)
             subprocess.run(["git", "push"], check=True)
-            messagebox.showinfo("GitHub sync", "Logs synced successfully.")
+            messagebox.showinfo("GitHub sync", f"Logs synced successfully.\nBackup: {backup_dir}")
         except (OSError, subprocess.CalledProcessError) as error:
             messagebox.showerror("GitHub sync failed", str(error))
 
@@ -408,7 +617,9 @@ class PublicApp(tk.Tk):
         updates = ttk.Frame(self.page_content, style="Card.TFrame", padding=24)
         updates.pack(fill="x", pady=(18, 0))
         ttk.Label(updates, text="Updates", style="CardTitle.TLabel").pack(anchor="w")
-        ttk.Label(updates, text="Check manually whenever you choose. Nothing updates automatically.", style="Body.TLabel").pack(anchor="w", pady=(8, 12))
+        ttk.Label(updates, text="AutoDoc checks for new releases but never installs one without your approval.", style="Body.TLabel").pack(anchor="w", pady=(8, 12))
+        self.auto_update_alerts = tk.BooleanVar(value=self.settings.get("auto_update_alerts", True))
+        ttk.Checkbutton(updates, text="Ask me about new releases on launch", variable=self.auto_update_alerts).pack(anchor="w", pady=(0, 12))
         ttk.Button(updates, text="Check for updates", style="Secondary.TButton", command=self.check_for_updates).pack(anchor="w")
 
     def show_vibe_code(self):
@@ -439,6 +650,9 @@ class PublicApp(tk.Tk):
         self.vibe_output.configure(state="disabled")
 
     def ask_vibe(self):
+        if public_cli.SESSION_FILE.exists():
+            messagebox.showwarning("Finish session first", "Vibe Code cannot run while a focus session is open. Finish the session, then try again.")
+            return
         request = self.vibe_request.get("1.0", "end").strip()
         if not request:
             messagebox.showwarning("Vibe Code", "Describe the feature you want to build first.")
@@ -464,6 +678,9 @@ class PublicApp(tk.Tk):
     def apply_vibe(self):
         if not self.vibe_proposal:
             return
+        if public_cli.SESSION_FILE.exists():
+            messagebox.showwarning("Finish session first", "Vibe Code cannot apply changes while a focus session is open.")
+            return
         if not messagebox.askyesno("Apply changes", "Create a backup and apply this proposal?\n\nPython files will be syntax-checked afterward."):
             return
         try:
@@ -479,6 +696,7 @@ class PublicApp(tk.Tk):
         public_cli.STATE_DIR.mkdir(exist_ok=True)
         self.settings["gemini_api_key"] = self.api_key.get().strip()
         self.settings["github_client_id"] = self.github_client_id.get().strip()
+        self.settings["auto_update_alerts"] = self.auto_update_alerts.get()
         SETTINGS_FILE.write_text(json.dumps(self.settings, indent=2) + "\n", encoding="utf-8")
         messagebox.showinfo("Settings saved", "Your local settings were saved.")
 
@@ -535,6 +753,15 @@ class PublicApp(tk.Tk):
         messagebox.showinfo("GitHub sign-in", f"Enter this code in your browser:\n\n{user_code}\n\nWaiting for authorization...")
 
     def check_for_updates(self):
+        self.fetch_release(show_current=True)
+
+    def check_updates_on_startup(self):
+        if self.update_alert_checked or not self.settings.get("auto_update_alerts", True):
+            return
+        self.update_alert_checked = True
+        self.fetch_release(show_current=False)
+
+    def fetch_release(self, show_current):
         def request_release():
             try:
                 request = urllib.request.Request(UPDATE_API_URL, headers={"User-Agent": "AutoDoc-Public"})
@@ -542,15 +769,82 @@ class PublicApp(tk.Tk):
                     release = json.loads(response.read().decode("utf-8"))
                 version = release.get("tag_name", "latest")
                 url = release.get("html_url", UPDATE_API_URL)
-                self.after(0, lambda: self.show_release(version, url))
+                asset_url = self.release_asset_url(release)
+                self.after(0, lambda: self.show_release(version, url, asset_url, show_current))
             except (OSError, urllib.error.URLError, json.JSONDecodeError) as error:
-                self.after(0, lambda: messagebox.showerror("Update check failed", str(error)))
+                if show_current:
+                    self.after(0, lambda: messagebox.showerror("Update check failed", str(error)))
 
         threading.Thread(target=request_release, daemon=True).start()
 
-    def show_release(self, version, url):
-        if messagebox.askyesno("Update check", f"Latest public release: {version}\n\nOpen the release page?"):
-            webbrowser.open(url)
+    @staticmethod
+    def release_is_newer(version):
+        def numbers(value):
+            return tuple(int(part) for part in value.lstrip("v").split("-")[0].split(".") if part.isdigit())
+
+        return numbers(version) > numbers(public_cli.VERSION)
+
+    @staticmethod
+    def release_asset_url(release):
+        for asset in release.get("assets", []):
+            name = asset.get("name", "").lower()
+            if name == "autodoc-public.exe":
+                return asset.get("browser_download_url")
+        return None
+
+    def show_release(self, version, url, asset_url=None, show_current=True):
+        if not self.release_is_newer(version):
+            if show_current:
+                messagebox.showinfo("Update check", f"You are up to date ({public_cli.VERSION}).")
+            return
+        if self.settings.get("last_alerted_release") == version and not show_current:
+            return
+        self.settings["last_alerted_release"] = version
+        SETTINGS_FILE.parent.mkdir(exist_ok=True)
+        SETTINGS_FILE.write_text(json.dumps(self.settings, indent=2) + "\n", encoding="utf-8")
+        if not asset_url or not getattr(sys, "frozen", False):
+            if messagebox.askyesno("New AutoDoc release", f"A new public release is available: {version}\n\nOpen the release page?"):
+                webbrowser.open(url)
+            return
+        if messagebox.askyesno("New AutoDoc release", f"A new public release is available: {version}\n\nDownload and install it now?"):
+            threading.Thread(target=self.download_and_install_update, args=(asset_url, version), daemon=True).start()
+
+    def download_and_install_update(self, asset_url, version):
+        current_exe = Path(sys.executable).resolve()
+        try:
+            with tempfile.NamedTemporaryFile(prefix="autodoc-update-", suffix=".exe", dir=current_exe.parent, delete=False) as handle:
+                download_path = Path(handle.name)
+            request = urllib.request.Request(asset_url, headers={"User-Agent": "AutoDoc-Public"})
+            with urllib.request.urlopen(request, timeout=60) as response, download_path.open("wb") as handle:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+            if download_path.stat().st_size < 1_000_000:
+                raise RuntimeError("The downloaded update is unexpectedly small.")
+            with tempfile.NamedTemporaryFile(prefix="autodoc-updater-", suffix=".ps1", delete=False) as script_handle:
+                script_path = Path(script_handle.name)
+            script = """$ErrorActionPreference = 'Stop'
+$processId = {process_id}
+$source = '{source}'
+$target = '{target}'
+while (Get-Process -Id $processId -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 250 }}
+Move-Item -LiteralPath $source -Destination $target -Force
+Start-Process -FilePath $target
+Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
+""".format(process_id=os.getpid(), source=str(download_path).replace("'", "''"), target=str(current_exe).replace("'", "''"))
+            script_path.write_text(script, encoding="utf-8")
+            subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)], creationflags=subprocess.CREATE_NO_WINDOW)
+            self.after(0, lambda: messagebox.showinfo("Update ready", f"AutoDoc {version} will restart to finish updating."))
+            self.after(500, self.destroy)
+        except (OSError, urllib.error.URLError, RuntimeError) as error:
+            try:
+                download_path.unlink(missing_ok=True)
+            except UnboundLocalError:
+                pass
+            error_message = str(error)
+            self.after(0, lambda: messagebox.showerror("Update failed", error_message))
 
     def refresh_dashboard(self):
         self.update_timer()

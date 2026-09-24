@@ -1,5 +1,7 @@
 from datetime import datetime
 import json
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -7,12 +9,44 @@ import click
 from PIL import ImageGrab
 
 
-VERSION = "0.1.0-public"
+VERSION = os.getenv("AUTODOC_VERSION", "0.1.0-public")
 STATE_DIR = Path(".autodoc-public")
 SESSION_FILE = STATE_DIR / "session.json"
+SHIFT_FILE = STATE_DIR / "shift.json"
 STATS_FILE = STATE_DIR / "stats.json"
 LOG_DIR = Path("logs")
 SCREENSHOT_DIR = Path("screenshots")
+
+
+def save_shift(shift):
+    STATE_DIR.mkdir(exist_ok=True)
+    SHIFT_FILE.write_text(json.dumps(shift, indent=2) + "\n", encoding="utf-8")
+
+
+def load_shift():
+    if not SHIFT_FILE.exists():
+        return None
+    try:
+        return json.loads(SHIFT_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raise click.ClickException(f"Invalid shift file: {SHIFT_FILE}")
+
+
+def backup_journal():
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_dir = STATE_DIR / "backups" / f"journal_{timestamp}"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    for source in (LOG_DIR, STATS_FILE, SHIFT_FILE):
+        if source.is_dir():
+            shutil.copytree(source, backup_dir / source.name, dirs_exist_ok=True)
+        elif source.exists():
+            shutil.copy2(source, backup_dir / source.name)
+    return backup_dir
+
+
+def capture_screenshot(path, bbox=None):
+    SCREENSHOT_DIR.mkdir(exist_ok=True)
+    ImageGrab.grab(bbox=bbox, all_screens=True).save(path)
 
 
 def load_stats():
@@ -37,6 +71,27 @@ def append_log(entry, date_str):
     with log_file.open("a", encoding="utf-8") as handle:
         handle.write(entry)
     return log_file
+
+
+def recent_journal_context(max_files=3, max_chars=12000):
+    if not LOG_DIR.exists():
+        return "No previous journal entries found."
+    files = sorted(LOG_DIR.glob("*.md"), reverse=True)[:max_files]
+    if not files:
+        return "No previous journal entries found."
+    sections = []
+    remaining = max_chars
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        excerpt = text[-remaining:]
+        sections.append(f"FILE: {path.name}\n{excerpt}")
+        remaining -= len(excerpt)
+        if remaining <= 0:
+            break
+    return "\n\n".join(sections) or "No readable previous journal entries found."
 
 
 def record_session(date_str, duration_minutes):

@@ -31,7 +31,9 @@ Your existing developer AutoDoc state is not used.
 ## What Each Area Does
 
 - **Dashboard**: See sessions, minutes, days logged, and the current project.
-- **Session**: Start a timer-based work session and finish it into a Markdown log.
+- **Focus Session**: Start a timer-based work session, capture optional screenshots, and finish it into a Markdown log.
+- **Work Shift**: Clock in for a workday, keep a running notepad, and clock out into an AI-reviewed journal entry.
+- **Continue**: Paste or import a rough note and turn it into an editable continuation based on recent journal context.
 - **Manual Log**: Record one piece of work without starting a session or timer.
 - **Logs**: Read every local Markdown log inside the app.
 - **Vibe Code**: Ask Gemini for a proposed feature, review the files, and apply only approved changes.
@@ -45,13 +47,26 @@ notes, but you edit and approve the result before it is saved.
 
 ## Sessions
 
-Use **Session** when you want a live timer:
+Use **Focus Session** when you want a live timer:
 
 1. Enter a goal and definition of done.
 2. Choose a planned duration.
 3. Start the session.
 4. Watch the live timer in the top bar.
 5. Finish the session and review the generated entry.
+
+Screenshots are manual and can capture all displays or one selected monitor.
+
+Use **Work Shift** when you want a broader workday journal. Clock in, paste or
+type notes throughout the day, then clock out to review an AI-generated journal
+before saving it.
+
+## Continue from notes
+
+Use **Continue** for notes copied from a notepad, ticket, chat, or handoff. AutoDoc
+looks at the latest local journal entries, identifies the last known stopping point,
+and proposes a next step. AI output is labeled for review, and when AI is unavailable
+the app uses a cautious local fallback that does not claim unverified work was done.
 
 ## AI and Privacy
 
@@ -67,7 +82,8 @@ client ID is configured. Local logs remain usable without GitHub.
 
 The **Sync to GitHub** action uses two confirmations: first review changed files,
 then confirm staging Markdown logs, committing, and pushing. It does not silently
-sync the entire project.
+sync the entire project. A timestamped backup of the journal, statistics, and
+active shift state is created under `.autodoc-public/backups/` before staging.
 
 ## Vibe Code Safety
 
@@ -77,8 +93,31 @@ rolls back when validation fails. It does not run shell commands automatically.
 
 ## Updates
 
-Open **Settings** and choose **Check for updates** whenever you want. Updates
-are never downloaded or installed automatically.
+Open **Settings** and choose **Check for updates**, or enable the optional launch
+alert. For a packaged release, AutoDoc can download the `AutoDoc-Public.exe`
+asset from GitHub, replace the running executable after approval, and restart.
+Updates are never installed without approval.
+
+## Publishing releases
+
+Build the first bootstrap executable with:
+
+```powershell
+.\public_edition\build.ps1 -Version 0.1.0-public
+```
+
+Publish `dist\AutoDoc-Public.exe` as a GitHub release asset with the exact name
+`AutoDoc-Public.exe`. For every later update, bump the version and publish the
+new executable and its generated `AutoDoc-Public.exe.sha256` checksum under the
+same asset name:
+
+```powershell
+.\public_edition\build.ps1 -Version 0.2.0-public
+```
+
+The installed app checks the latest release, asks the user, downloads the asset,
+and replaces itself. Keep the release asset name stable and use increasing
+semantic versions so the app can recognize newer releases.
 
 ## Troubleshooting
 
@@ -93,7 +132,7 @@ Developers can run the source version with Python 3.10 or newer:
 
 ```powershell
 python -m pip install -r .\public_edition\requirements.txt
-python .\autodoc\public_gui.py
+python -m autodoc.public_gui
 ```
 
 ## Included Features
@@ -133,7 +172,7 @@ python .\autodoc\public_cli.py start
 Launch the desktop GUI with:
 
 ```powershell
-python .\autodoc\public_gui.py
+python -m autodoc.public_gui
 ```
 
 Public project state is stored in `.autodoc-public/` in the project being documented.
