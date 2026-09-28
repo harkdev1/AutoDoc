@@ -30,10 +30,9 @@ Your existing developer AutoDoc state is not used.
 
 ## What Each Area Does
 
-- **Dashboard**: See sessions, minutes, days logged, and the current project.
+- **Project Hub**: See project activity, open or create projects, review today's focus, and sync to GitHub after review.
 - **Focus Session**: Start a timer-based work session, capture optional screenshots, and finish it into a Markdown log.
-- **Work Shift**: Clock in for a workday, keep a running notepad, and clock out into an AI-reviewed journal entry.
-- **Project Hub**: Create or open projects, see the daily focus, and sync the full project to GitHub after review.
+- **Work Shift**: Keep a date-based daily journal with planned, completed, and saved-for-tomorrow items.
 - **Manual Log**: Record one piece of work without starting a session or timer.
 - **Logs**: Read every local Markdown log inside the app.
 - **Vibe Code**: Ask Gemini for a proposed feature, then use one approved **Apply and test** action. AutoDoc backs up the project and validates changed Python and JSON files immediately.
@@ -60,16 +59,16 @@ Screenshots are manual and can capture all displays or one selected monitor.
 Focus sessions also offer explicit evidence capture, which saves a screenshot every
 30 seconds only after you start it. AutoDoc never records in the background.
 
-Use **Work Shift** when you want a broader workday journal. Clock in, paste or
-type notes throughout the day, then clock out to review an AI-generated journal
-before saving it.
+Use **Work Shift** as a lightweight daily record:
 
-## Continue from notes
+1. Open the shift and add items under **Planned for Today**.
+2. Move or copy items into **Completed** as you finish them.
+3. Put unfinished work under **Saved for Tomorrow**.
+4. Clock out to have Gemini organize the lists into a readable journal, review it,
+   and save it to the date-named Markdown log.
 
-Use **Continue** for notes copied from a notepad, ticket, chat, or handoff. AutoDoc
-looks at the latest local journal entries, identifies the last known stopping point,
-and proposes a next step. AI output is labeled for review, and when AI is unavailable
-the app uses a cautious local fallback that does not claim unverified work was done.
+Lists save locally as you edit and remain available after closing the app. Saved
+items carry into the next date's plan; completed work remains tied to its date.
 
 ## AI and Privacy
 
@@ -77,6 +76,8 @@ AI is optional. Without a Gemini key, AutoDoc still supports local sessions,
 manual logs, Markdown viewing, screenshots, and statistics. When AI is enabled,
 the relevant notes or project files are sent to the provider to produce a result.
 Review AI output before saving or applying it.
+If Gemini is unavailable, AutoDoc reports the reason and keeps the original notes;
+work-shift entries use a simple local formatter as a fallback.
 
 ## GitHub
 

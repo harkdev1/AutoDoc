@@ -33,6 +33,70 @@ def load_shift():
         raise click.ClickException(f"Invalid shift file: {SHIFT_FILE}")
 
 
+def load_work_journal(now=None):
+    now = now or datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    state = load_shift() or {}
+    started_at = state.get("started_at") or state.pop("start_time", None)
+    work_date = state.get("work_date") or (started_at[:10] if started_at else today)
+    if work_date != today and not started_at:
+        state = {
+            "work_date": today,
+            "started_at": None,
+            "planned_today": state.get("saved_for_tomorrow", ""),
+            "completed": "",
+            "saved_for_tomorrow": "",
+        }
+    else:
+        state["work_date"] = work_date
+        state["started_at"] = started_at
+        state.setdefault("planned_today", "")
+        state.setdefault("completed", "")
+        state.setdefault("saved_for_tomorrow", "")
+    return state
+
+
+def start_work_shift(now=None):
+    now = now or datetime.now()
+    state = load_work_journal(now)
+    if not state.get("started_at"):
+        state["started_at"] = now.isoformat(timespec="seconds")
+    save_shift(state)
+    return state
+
+
+def save_work_journal(state):
+    save_shift(state)
+
+
+def close_work_shift(state, now=None):
+    now = now or datetime.now()
+    started_at = state.get("started_at")
+    state["started_at"] = None
+    state["last_closed_at"] = now.isoformat(timespec="seconds")
+    save_shift(state)
+    return started_at
+
+
+def save_daily_work_entry(date_str, entry):
+    start_marker = "<!-- autodoc-work-shift:start -->"
+    end_marker = "<!-- autodoc-work-shift:end -->"
+    log_file = LOG_DIR / f"{date_str}.md"
+    if not log_file.exists():
+        log_file.parent.mkdir(exist_ok=True)
+        log_file.write_text(f"# AutoDoc Public Log - {date_str}\n", encoding="utf-8")
+    content = log_file.read_text(encoding="utf-8")
+    block = f"{start_marker}\n{entry.rstrip()}\n{end_marker}"
+    if start_marker in content and end_marker in content:
+        before, remainder = content.split(start_marker, 1)
+        _old, after = remainder.split(end_marker, 1)
+        content = before.rstrip() + "\n\n" + block + after
+    else:
+        content = content.rstrip() + "\n\n" + block + "\n"
+    log_file.write_text(content, encoding="utf-8")
+    return log_file
+
+
 def save_project_plan(plan):
     STATE_DIR.mkdir(exist_ok=True)
     PROJECT_PLAN_FILE.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")

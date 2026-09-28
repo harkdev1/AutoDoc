@@ -1,4 +1,5 @@
 from datetime import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -454,48 +455,156 @@ class PublicApp(tk.Tk):
 
     def show_shift(self):
         self.clear_content()
-        self.page_header("Work journal", "One simple daily page for clocking in, writing, and clocking out.")
+        state = public_cli.load_work_journal()
+        self.page_header("Work journal", "A date-based daily page. Your notes save as you edit and carry forward when you choose.")
         panel = ttk.Frame(self.page_content, style="Card.TFrame", padding=24)
         panel.pack(fill="both", expand=True)
-        ttk.Label(panel, text="Today's work", style="CardTitle.TLabel").pack(anchor="w")
-        ttk.Label(panel, text="Paste notes from your notepad as you go. AutoDoc will turn the page into a reviewed journal when you clock out.", style="Body.TLabel", wraplength=650).pack(anchor="w", pady=(8, 18))
-        ttk.Label(panel, text="Shift notes", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
-        self.shift_notes = tk.Text(panel, height=12, wrap="word", font=("Segoe UI", 10))
-        self.shift_notes.pack(fill="both", expand=True, pady=(0, 14))
-        if public_cli.SHIFT_FILE.exists():
-            ttk.Button(panel, text="Clock out and journal shift", style="Primary.TButton", command=self.finish_shift).pack(anchor="w")
-            ttk.Label(panel, text="Shift active. Add notes throughout the day, then clock out when finished.", style="Body.TLabel").pack(anchor="w", pady=(12, 0))
+        active = bool(state.get("started_at"))
+        status = "Shift open" if active else "Shift closed"
+        ttk.Label(panel, text=f"{state['work_date']}  |  {status}", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(panel, text="Move short action items between these lists as your day changes. AutoDoc saves each edit locally.", style="Body.TLabel", wraplength=680).pack(anchor="w", pady=(8, 18))
+        columns = ttk.Frame(panel, style="Card.TFrame")
+        columns.pack(fill="both", expand=True, pady=(0, 16))
+        self.work_journal_editors = {}
+        categories = (
+            ("planned_today", "Planned for Today"),
+            ("completed", "Completed"),
+            ("saved_for_tomorrow", "Saved for Tomorrow"),
+        )
+        for column, (key, title) in enumerate(categories):
+            columns.columnconfigure(column, weight=1, uniform="journal")
+            section = ttk.Frame(columns, style="Card.TFrame", padding=(0, 0, 10, 0))
+            section.grid(row=0, column=column, sticky="nsew")
+            ttk.Label(section, text=title, style="CardTitle.TLabel").pack(anchor="w", pady=(0, 6))
+            editor = tk.Text(section, height=10, wrap="word", font=("Segoe UI", 10), undo=True)
+            editor.pack(fill="both", expand=True)
+            editor.insert("1.0", state.get(key, ""))
+            editor.bind("<KeyRelease>", self.persist_work_journal)
+            editor.bind("<FocusOut>", self.persist_work_journal)
+            self.work_journal_editors[key] = editor
+        actions = ttk.Frame(panel, style="Card.TFrame")
+        actions.pack(fill="x")
+        if active:
+            ttk.Button(actions, text="Clock out and format journal", style="Primary.TButton", command=self.finish_shift).pack(side="right")
         else:
-            ttk.Button(panel, text="Clock in", style="Primary.TButton", command=self.start_shift).pack(anchor="w")
+            ttk.Button(actions, text="Open work shift", style="Primary.TButton", command=self.start_shift).pack(side="right")
+        ttk.Label(actions, text="Changes save locally as you type.", style="Body.TLabel").pack(side="left")
+
+    def persist_work_journal(self, _event=None):
+        editors = getattr(self, "work_journal_editors", {})
+        if not editors:
+            return
+        state = public_cli.load_work_journal()
+        for key, editor in editors.items():
+            state[key] = editor.get("1.0", "end-1c").strip()
+        public_cli.save_work_journal(state)
 
     def start_shift(self):
         if public_cli.SESSION_FILE.exists():
             messagebox.showwarning("Focus session active", "Finish the focus session before clocking into a work shift.")
             return
-        public_cli.save_shift({"start_time": datetime.now().isoformat(timespec="seconds"), "goal": "Daily work journal"})
-        messagebox.showinfo("Shift started", "You are clocked in. Add notes as the day unfolds.")
+        public_cli.start_work_shift()
         self.show_shift()
 
     def finish_shift(self):
+        state = public_cli.load_work_journal()
+        if not state.get("started_at"):
+            messagebox.showwarning("No open shift", "Open a work shift before clocking out.")
+            return
+        self.persist_work_journal()
+        state = public_cli.load_work_journal()
+        end_time = datetime.now()
+        start_time = datetime.fromisoformat(state["started_at"])
+        categories = "\n".join(f"{title}:\n{state.get(key, '').strip() or 'None recorded.'}" for key, title in (
+            ("planned_today", "Planned for Today"),
+            ("completed", "Completed"),
+            ("saved_for_tomorrow", "Saved for Tomorrow"),
+        ))
+        loading = tk.Toplevel(self)
+        loading.title("Formatting work journal")
+        loading.transient(self)
+        loading.grab_set()
+        ttk.Label(loading, text="Gemini is organizing today's work into a readable journal...", padding=22).pack()
+        progress = ttk.Progressbar(loading, mode="indeterminate", length=320)
+        progress.pack(padx=22, pady=(0, 20))
+        progress.start(12)
+        threading.Thread(target=self.request_shift_format, args=(state, categories, start_time, end_time, loading), daemon=True).start()
+
+    def request_shift_format(self, state, categories, start_time, end_time, loading):
+        formatted, error = self.format_work_shift(state)
+        self.after(0, lambda: self.review_finished_shift(state, categories, start_time, end_time, formatted, error, loading))
+
+    def format_work_shift(self, state):
+        if not state.get("completed", "").strip() and not state.get("planned_today", "").strip() and not state.get("saved_for_tomorrow", "").strip():
+            return "", "The work journal is empty."
+        if not self.settings.get("gemini_api_key"):
+            return "", "No Gemini API key is saved in this project's Settings."
+        if genai is None:
+            return "", "The Gemini SDK is unavailable in this build."
+        prompt = """Turn these engineering work-shift notes into a polished, concise Markdown journal.
+Preserve technical details and the user's meaning. Correct spelling and organize fragments.
+Do not invent work, outcomes, dates, or decisions. Include every supplied item in the right category.
+Use exactly these headings and write 'None recorded.' for empty sections:
+### Brief Summary
+### Planned for Today
+### Completed
+### Saved for Tomorrow
+Use readable short bullets under the categories. Return only the formatted Markdown.
+The brief summary must summarize Completed items. Only use 'None recorded.' there when
+the Completed input is empty. Never summarize planned or future work as completed.
+
+{categories}
+""".format(categories="\n\n".join(f"{title}:\n{state.get(key, '').strip() or 'None recorded.'}" for key, title in (
+            ("planned_today", "Planned for Today"),
+            ("completed", "Completed"),
+            ("saved_for_tomorrow", "Saved for Tomorrow"),
+        )))
         try:
-            shift = public_cli.load_shift()
-            end_time = datetime.now()
-            start_time = datetime.fromisoformat(shift["start_time"])
-            duration = max(0, int((end_time - start_time).total_seconds() / 60))
-            notes = self.shift_notes.get("1.0", "end").strip()
-            summary = self.generate_summary(notes)
-            review = self.open_review_dialog(summary)
-            if review is None:
-                return
-            date_str = end_time.strftime("%Y-%m-%d")
-            entry = f"\n---\n\n## Work Shift - {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}\n### Focus\n{shift.get('goal') or 'Not specified'}\n\n### AI Journal\n{review}\n\n### Notes\n{notes or 'None'}\n\n### Duration\n{duration} minutes\n"
-            log_file = public_cli.append_log(entry, date_str)
+            client = genai.Client(api_key=self.settings["gemini_api_key"])
+            response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+            if not response.text or not response.text.strip():
+                return "", "Gemini returned an empty journal."
+            formatted = response.text.strip()
+            required_sections = ("Brief Summary", "Planned for Today", "Completed", "Saved for Tomorrow")
+            if any(section.lower() not in formatted.lower() for section in required_sections):
+                return "", "Gemini returned an incomplete journal format."
+            if state.get("completed", "").strip():
+                before_planned, separator, after_planned = formatted.partition("### Planned for Today")
+                summary = before_planned.partition("### Brief Summary")[2].strip().lower()
+                if summary in {"none", "none recorded.", "none recorded", "n/a"}:
+                    first_item = next(line.strip().lstrip("-* \t") for line in state["completed"].splitlines() if line.strip())
+                    safe_summary = f"Completed work was recorded, including {first_item.rstrip('.')} .".replace(" .", ".")
+                    formatted = f"### Brief Summary\n{safe_summary}\n\n### Planned for Today{after_planned}" if separator else formatted
+            return formatted, ""
+        except Exception as error:
+            return "", f"Gemini could not format the journal: {error}"
+
+    def local_work_shift_format(self, state):
+        sections = ["### Brief Summary", "Today's work was recorded from the shift lists."]
+        for key, title in (("planned_today", "Planned for Today"), ("completed", "Completed"), ("saved_for_tomorrow", "Saved for Tomorrow")):
+            items = [line.strip().lstrip("- *\t") for line in state.get(key, "").splitlines() if line.strip()]
+            sections.extend((f"### {title}", "\n".join(f"- {item}" for item in items) if items else "None recorded."))
+        return "\n\n".join(sections)
+
+    def review_finished_shift(self, state, categories, start_time, end_time, formatted, error, loading):
+        loading.destroy()
+        if error:
+            messagebox.showwarning("Gemini unavailable", f"{error}\n\nAutoDoc will keep your notes and use a simple local format instead.")
+            formatted = self.local_work_shift_format(state)
+        review = self.open_review_dialog(formatted)
+        if review is None:
+            return
+        date_str = state["work_date"]
+        duration = max(0, int((end_time - start_time).total_seconds() / 60))
+        entry = f"## Work Shift - {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}\n\n{review}\n\n### Duration\n{duration} minutes\n"
+        try:
+            log_file = public_cli.save_daily_work_entry(date_str, entry)
             public_cli.record_session(date_str, duration)
-            public_cli.SHIFT_FILE.unlink()
-            messagebox.showinfo("Shift saved", f"Work journal written to {log_file}")
+            public_cli.close_work_shift(state, end_time)
+            messagebox.showinfo("Shift saved", f"Readable work journal saved to {log_file}")
             self.show_logs()
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-            messagebox.showerror("Could not finish shift", str(error))
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            messagebox.showerror("Could not save shift", str(error))
 
     def load_settings(self):
         if not SETTINGS_FILE.exists():
@@ -508,15 +617,21 @@ class PublicApp(tk.Tk):
             return {"gemini_api_key": "", "github_username": "", "auto_update_alerts": True}
 
     def generate_summary(self, notes):
-        if not notes or not self.settings.get("gemini_api_key") or genai is None:
-            return "AI summary unavailable; local notes preserved."
+        if not notes.strip():
+            return "No notes were recorded."
+        if not self.settings.get("gemini_api_key"):
+            return f"Gemini unavailable: no API key is configured. Original notes preserved:\n{notes}"
+        if genai is None:
+            return f"Gemini unavailable: SDK is missing. Original notes preserved:\n{notes}"
         try:
             client = genai.Client(api_key=self.settings["gemini_api_key"])
-            prompt = "Summarize these engineering notes in 2-4 concise sentences:\n\n" + notes
+            prompt = "Rewrite these engineering notes as a clear, professional 2-4 sentence work summary. Preserve technical facts, do not invent outcomes, and keep uncertainty explicit:\n\n" + notes
             response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+            if not response.text or not response.text.strip():
+                raise ValueError("Gemini returned an empty summary.")
             return response.text.strip()
-        except Exception:
-            return "AI summary unavailable; local notes preserved."
+        except Exception as error:
+            return f"Gemini summary failed: {error}. Original notes preserved:\n{notes}"
 
     def show_continue(self):
         self.clear_content()
@@ -957,6 +1072,17 @@ RECENT JOURNAL CONTEXT:
                 return asset.get("browser_download_url")
         return None
 
+    @staticmethod
+    def checksum_matches(executable_path, checksum_text):
+        expected = checksum_text.strip().split()[0].lower() if checksum_text.strip() else ""
+        if len(expected) != 64 or any(character not in "0123456789abcdef" for character in expected):
+            return False
+        digest = hashlib.sha256()
+        with Path(executable_path).open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest() == expected
+
     def show_release(self, version, url, asset_url=None, show_current=True):
         if not self.release_is_newer(version):
             if show_current:
@@ -988,16 +1114,35 @@ RECENT JOURNAL CONTEXT:
                     handle.write(chunk)
             if download_path.stat().st_size < 1_000_000:
                 raise RuntimeError("The downloaded update is unexpectedly small.")
+            checksum_url = asset_url.rsplit("/", 1)[0] + "/AutoDoc-Public.exe.sha256"
+            checksum_request = urllib.request.Request(checksum_url, headers={"User-Agent": "AutoDoc-Public"})
+            with urllib.request.urlopen(checksum_request, timeout=20) as response:
+                checksum_text = response.read().decode("ascii")
+            if not self.checksum_matches(download_path, checksum_text):
+                raise RuntimeError("The downloaded update failed SHA-256 verification; the installed app was not changed.")
             with tempfile.NamedTemporaryFile(prefix="autodoc-updater-", suffix=".ps1", delete=False) as script_handle:
                 script_path = Path(script_handle.name)
             script = """$ErrorActionPreference = 'Stop'
 $processId = {process_id}
 $source = '{source}'
 $target = '{target}'
+$backup = "$target.update-backup"
 while (Get-Process -Id $processId -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 250 }}
-Move-Item -LiteralPath $source -Destination $target -Force
-Start-Process -FilePath $target
-Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
+for ($attempt = 0; $attempt -lt 20; $attempt++) {{
+    try {{
+        if (Test-Path -LiteralPath $backup) {{ Remove-Item -LiteralPath $backup -Force }}
+        Move-Item -LiteralPath $target -Destination $backup -Force
+        Move-Item -LiteralPath $source -Destination $target -Force
+        Start-Process -FilePath $target
+        Remove-Item -LiteralPath $backup -Force
+        Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
+        exit 0
+    }} catch {{
+        if ((Test-Path -LiteralPath $backup) -and -not (Test-Path -LiteralPath $target)) {{ Move-Item -LiteralPath $backup -Destination $target -Force }}
+        Start-Sleep -Milliseconds 500
+    }}
+}}
+throw 'AutoDoc could not replace the existing executable. The previous version was preserved.'
 """.format(process_id=os.getpid(), source=str(download_path).replace("'", "''"), target=str(current_exe).replace("'", "''"))
             script_path.write_text(script, encoding="utf-8")
             subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script_path)], creationflags=subprocess.CREATE_NO_WINDOW)
