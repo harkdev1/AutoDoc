@@ -11,7 +11,7 @@ touch `.autodoc/` state or perform automatic Git staging.
 
 Windows users can download the latest app here:
 
-[Download AutoDoc-Public.exe](https://github.com/harkdev1/AutoDoc-Public-Edition/releases/latest)
+[Download AutoDoc-Public.exe](https://github.com/harkdev1/AutoDoc/releases)
 
 Download the `.exe`, place it somewhere you can find it, and double-click it.
 No Python installation is required for the executable release.
