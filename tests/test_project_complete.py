@@ -106,6 +106,32 @@ class ProjectCompletionTests(unittest.TestCase):
             self.assertIn("Existing project history stays below", refreshed)
             self.assertIn("2026-10-10", refreshed)
 
+    def test_build_project_completion_markdown_prefers_significant_screenshots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "screenshots").mkdir()
+            (root / "logs").mkdir()
+            (root / "docs").mkdir()
+
+            newest = root / "screenshots" / "2026-10-10_100000_temp-progress.png"
+            newest.write_bytes(b"fakepng")
+            important = root / "screenshots" / "2026-10-08_080000_telemetry-visibility-gap.png"
+            important.write_bytes(b"fakepng")
+
+            result = build_project_completion_markdown(
+                project_root=root,
+                project_name="Demo Project",
+                status="In progress",
+                narrative="We are validating telemetry visibility before the next phase.",
+                lessons=["Use the strongest proof to explain progress."],
+                next_steps=["Fix the telemetry issue."],
+                output_path=root / "docs" / "project-complete-short.md",
+            )
+
+            self.assertIn("telemetry visibility gap", result.lower())
+            self.assertIn("This screenshot shows the telemetry", result)
+            self.assertLess(result.lower().find("telemetry visibility gap"), result.lower().find("temp progress"))
+
     def test_write_project_completion_documents_overwrites_short_and_appends_long(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

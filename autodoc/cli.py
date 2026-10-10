@@ -471,6 +471,60 @@ def collect_project_timeline(project_root=None):
     return entries
 
 
+def select_significant_screenshots(project_root=None, max_screenshots=3):
+    """Choose the evidence snapshots with the strongest narrative value rather than only the newest files."""
+    root = Path(project_root or Path.cwd())
+    screenshot_dir = root / "screenshots"
+    if not screenshot_dir.exists():
+        return []
+
+    candidates = []
+    for path in screenshot_dir.iterdir():
+        if not path.is_file() or path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+            continue
+        scratch = path.stem.lower().replace("-", " ").replace("_", " ")
+        score = 0
+        for keyword in [
+            "telemetry", "security", "policy", "gpo", "system", "powershell", "domain",
+            "workstation", "server", "dashboard", "prototype", "visibility", "audit",
+            "event", "lab", "debug", "script", "activity", "status", "capability",
+        ]:
+            if keyword in scratch:
+                score += 2
+        if any(token in scratch for token in ["gap", "issue", "error", "fix", "validation", "baseline", "completed", "configured", "troubleshooting"]):
+            score += 1
+        if path.stat().st_mtime:
+            score += 0
+        candidates.append({"path": path, "score": score, "mtime": path.stat().st_mtime})
+
+    candidates.sort(key=lambda item: (item["score"], item["mtime"]), reverse=True)
+    return [item["path"] for item in candidates[:max_screenshots]]
+
+
+def describe_screenshot_context(screenshot_path, caption=""):
+    """Generate a short explanation for what the screenshot is showing in project terms."""
+    path = Path(screenshot_path)
+    stem = path.stem
+    cleaned = re.sub(r"^\d{4}-\d{2}-\d{2}_\d{6}_", "", stem)
+    cleaned = cleaned.replace("_", " ").replace("-", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    title = caption or (cleaned.title() if cleaned else path.name)
+    lowered = title.lower()
+
+    if "telemetry" in lowered or "event" in lowered or "security" in lowered:
+        description = "This screenshot shows the telemetry or evidence being reviewed to understand the current system behavior and validate what the environment is actually recording."
+    elif "policy" in lowered or "gpo" in lowered or "domain" in lowered or "workstation" in lowered or "server" in lowered:
+        description = "This screenshot shows the current configuration or system state being reviewed as part of the active project setup, validation, or troubleshooting work."
+    elif "powershell" in lowered or "script" in lowered or "system" in lowered or "diagnostic" in lowered:
+        description = "This screenshot captures the live shell output or diagnostic evidence that is guiding the current troubleshooting, validation, or operational decision."
+    elif "dashboard" in lowered or "prototype" in lowered or "status" in lowered:
+        description = "This screenshot shows the working interface or project state that is currently being shaped to communicate the latest status, progress, and story."
+    else:
+        description = "This screenshot captures the most important project evidence for the current phase, showing the main state, artifact, or operational view being reviewed."
+
+    return f"{description} It highlights the key detail the viewer should notice in this stage of the project."
+
+
 def build_project_completion_markdown(project_root=None, project_name=None, status="Complete", narrative="", lessons=None, next_steps=None, output_path=None, long_form=False):
     """Construct a short HR summary or a longer engineering story with timeline evidence and project proof."""
     root = Path(project_root or Path.cwd())
@@ -480,17 +534,11 @@ def build_project_completion_markdown(project_root=None, project_name=None, stat
     output_path = Path(output_path) if output_path else root / "docs" / "project-complete.md"
 
     screenshot_dir = root / "screenshots"
-    screenshot_paths = []
-    if screenshot_dir.exists():
-        screenshot_paths = sorted(
-            [path for path in screenshot_dir.iterdir() if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg"}],
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
+    screenshot_paths = select_significant_screenshots(project_root=root, max_screenshots=3) if screenshot_dir.exists() else []
 
     captions = get_screenshot_captions(root)
     proof_points = []
-    for screenshot in screenshot_paths[:3]:
+    for screenshot in screenshot_paths:
         stem = screenshot.stem
         stem_normalized = stem.lower().replace("_", " ").replace("-", " ")
         caption = re.sub(r"^\d{4}-\d{2}-\d{2}_\d{6}_", "", stem).replace("-", " ")
@@ -502,8 +550,9 @@ def build_project_completion_markdown(project_root=None, project_name=None, stat
         if match_caption:
             caption = match_caption
         rel_path = Path(os.path.relpath(screenshot, output_path.parent)).as_posix()
+        description = describe_screenshot_context(screenshot, caption)
         proof_points.append(
-            f"### Highlight: {caption}\n![{caption}]({rel_path})\n"
+            f"### Highlight: {caption}\n![{caption}]({rel_path})\n{description}\n"
         )
 
     if not proof_points:
