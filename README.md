@@ -1,5 +1,7 @@
 # AutoDoc
 
+> **Project status:** See [project-status.md](project-status.md) for the live status and journey, or the [short](docs/project-complete-short.md) and [long](docs/project-complete-long.md) project summaries.
+
 AutoDoc is an AI-assisted engineering workflow for turning daily technical work into structured, reviewable project documentation.
 
 It helps you:
