@@ -420,6 +420,392 @@ Rules:
         click.echo(f"Error: {e}")
         return None
 
+
+def list_log_files(project_root=None):
+    """Return the most recent daily logs first."""
+    root = Path(project_root or Path.cwd())
+    logs_dir = root / "logs"
+    if not logs_dir.exists():
+        return []
+
+    files = [path for path in logs_dir.glob("*.md") if path.is_file()]
+    return sorted(files, key=lambda path: path.name, reverse=True)
+
+
+def get_screenshot_captions(project_root=None):
+    """Collect screenshot captions from Markdown logs so a project summary can reuse earlier evidence."""
+    root = Path(project_root or Path.cwd())
+    captions = []
+    for log_file in list_log_files(root):
+        try:
+            content = log_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for match in re.finditer(r"!\[(.*?)\]\((?:\.\./)?screenshots/[^)]+\)", content, re.IGNORECASE):
+            caption = match.group(1).strip()
+            if caption:
+                captions.append({"caption": caption, "log": log_file.name})
+    return captions
+
+
+def collect_project_timeline(project_root=None):
+    """Read the time-boxed session entries and screenshot captions from the current project's logs."""
+    root = Path(project_root or Path.cwd())
+    entries = []
+    for log_file in list_log_files(root):
+        try:
+            content = log_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+
+        for match in re.finditer(r"## Session – ([^\n]+)\n(.*?)(?=\n---\n## Session|\n---\n\Z|\Z)", content, re.S):
+            stamp = match.group(1).strip()
+            body = match.group(2).strip()
+            if not body:
+                continue
+            entries.append({
+                "date": log_file.stem,
+                "stamp": stamp,
+                "body": body,
+            })
+    return entries
+
+
+def build_project_completion_markdown(project_root=None, project_name=None, status="Complete", narrative="", lessons=None, next_steps=None, output_path=None, long_form=False):
+    """Construct a short HR summary or a longer engineering story with timeline evidence and project proof."""
+    root = Path(project_root or Path.cwd())
+    project_name = project_name or root.name
+    lessons = lessons or []
+    next_steps = next_steps or []
+    output_path = Path(output_path) if output_path else root / "docs" / "project-complete.md"
+
+    screenshot_dir = root / "screenshots"
+    screenshot_paths = []
+    if screenshot_dir.exists():
+        screenshot_paths = sorted(
+            [path for path in screenshot_dir.iterdir() if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg"}],
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+
+    captions = get_screenshot_captions(root)
+    proof_points = []
+    for screenshot in screenshot_paths[:3]:
+        stem = screenshot.stem
+        stem_normalized = stem.lower().replace("_", " ").replace("-", " ")
+        caption = re.sub(r"^\d{4}-\d{2}-\d{2}_\d{6}_", "", stem).replace("-", " ")
+        caption = caption.title() if caption else screenshot.name
+        match_caption = next(
+            (entry["caption"] for entry in captions if entry["caption"].lower().replace("_", " ") in stem_normalized or stem_normalized in entry["caption"].lower().replace("_", " ")),
+            None,
+        )
+        if match_caption:
+            caption = match_caption
+        rel_path = Path(os.path.relpath(screenshot, output_path.parent)).as_posix()
+        proof_points.append(
+            f"### Highlight: {caption}\n![{caption}]({rel_path})\n"
+        )
+
+    if not proof_points:
+        proof_points.append("### Highlight moments\nNo screenshots were found in the current project. Capture a few key proof images to enrich this summary.\n")
+
+    lessons_block = "\n".join(f"- {lesson}" for lesson in lessons) if lessons else "- No formal lessons captured yet."
+    next_steps_block = "\n".join(f"- {step}" for step in next_steps) if next_steps else "- No further actions recorded."
+
+    if long_form:
+        timeline = collect_project_timeline(root)
+        timeline_sections = []
+        for item in timeline:
+            body = item["body"]
+            body = re.sub(r"^### ", "- ", body, flags=re.M)
+            timeline_sections.append(f"### {item['date']} • {item['stamp']}\n{body}\n")
+
+        timeline_body = "".join(timeline_sections) if timeline_sections else "No session logs were found. Start a session and finish it to populate the project story."
+
+        trials = []
+        for item in timeline:
+            body = item["body"]
+            if "Friction and AI Gaps" in body or "What the AI Missed" in body or "Dependencies/Blockers" in body:
+                trials.append(f"### {item['date']} • {item['stamp']}\n{body}\n")
+        trials_body = "".join(trials) if trials else "No detailed friction notes were captured, but the project still benefited from evidence-based learning and iteration."
+
+        long_markdown = f"""# {project_name}
+
+Status: {status}
+
+## Project story
+{narrative or 'This project is complete and the work is ready for handoff.'}
+
+## Project timeline
+{timeline_body}
+
+## Screenshots and proof
+{''.join(proof_points)}
+
+## Trials and tribulations
+{trials_body}
+
+## Lessons learned
+{lessons_block}
+
+## Next steps
+{next_steps_block}
+"""
+        return long_markdown
+
+    markdown = f"""# {project_name}
+
+Status: {status}
+
+## Project story
+{narrative or 'This project is complete and the work is ready for handoff.'}
+
+## What we shipped
+- The project was completed with a clear objective, technical execution, and proof captured in the logs.
+- The implementation and project records are documented in the repository for future context.
+- The work can be reviewed quickly by anyone familiar with the project.
+
+## Key proof moments
+{''.join(proof_points)}
+
+## Lessons learned
+{lessons_block}
+
+## Next steps
+{next_steps_block}
+"""
+    return markdown
+
+
+def update_project_readme(project_root=None, project_name=None, narrative="", status="Complete"):
+    """Promote the completed project summary to the top of README.md so it acts as the project landing page."""
+    root = Path(project_root or Path.cwd())
+    project_name = project_name or root.name
+    readme_path = root / "README.md"
+    summary = f"""# {project_name}
+
+## Status: {status}
+
+## Project summary
+{narrative or 'This project is complete and ready for review.'}
+
+---
+
+"""
+    if not readme_path.exists():
+        readme_path.write_text(summary, encoding="utf-8")
+        return summary
+
+    existing = readme_path.read_text(encoding="utf-8", errors="ignore")
+    if "## Status: " in existing and "## Project summary" in existing:
+        content = existing.split("## Project summary", 1)[1]
+        updated = summary + content.strip() + "\n"
+        readme_path.write_text(updated, encoding="utf-8")
+        return updated
+
+    readme_path.write_text(summary + existing.strip() + "\n", encoding="utf-8")
+    return summary + existing.strip() + "\n"
+
+
+def generate_project_completion_story(project_root=None, project_name=None):
+    """Use the project logs and screenshot captions to draft the milestone summary without requiring a full internal architecture change."""
+    root = Path(project_root or Path.cwd())
+    project_name = project_name or root.name
+    log_text = ""
+    for log_file in list_log_files(root):
+        try:
+            log_text += f"\n---\n{log_file.name}\n" + log_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+
+    screenshot_captions = get_screenshot_captions(root)
+    captions_text = "\n".join(f"- {entry['caption']}" for entry in screenshot_captions[:10]) if screenshot_captions else "- No screenshot captions captured yet."
+
+    try:
+        api_key = get_api_key()
+        if not api_key:
+            raise Exception("No API key configured.")
+
+        client = genai.Client(api_key=api_key)
+        prompt = f"""
+You are a senior product storyteller for technical projects.
+
+Write a concise completion summary for the project named '{project_name}'.
+Use the project's logs and screenshot captions as evidence.
+The audience includes curious employers and technical peers who want a quick understanding of what was built, what changed, and what we learned.
+
+Return a polished markdown summary with these headings:
+1. Project story
+2. Key achievements
+3. Lessons learned
+4. Next steps
+5. Proof points
+
+Project logs:
+{log_text[:6000]}
+
+Screenshot captions:
+{captions_text}
+"""
+        chat = client.chats.create(model="gemini-2.5-flash")
+        response = chat.send_message(prompt)
+        return response.text.strip() or "This project is complete and ready for review."
+    except Exception:
+        fallback = (
+            f"{project_name} was completed as a focused delivery effort with clear milestones, validation checkpoints, "
+            "and evidence captured in the project logs and screenshots. "
+            "The work centered on building a practical workflow, documenting the engineering process, and making the project easy to review. "
+            "The biggest lessons were to keep documentation close to delivery, record concrete proof as work progresses, and make handoff notes explicit for the next phase."
+        )
+        return fallback
+
+
+def open_log_for_editing(path):
+    """Open the selected log in the system editor so a user can manually refine or extend it."""
+    target = Path(path)
+    if not target.exists():
+        raise FileNotFoundError(f"Log not found: {target}")
+
+    if shutil.which("code"):
+        subprocess.run(["code", str(target)], check=False)
+        return target
+
+    if os.name == "nt":
+        subprocess.run(["notepad.exe", str(target)], check=False)
+        return target
+
+    click.echo(f"Open the log manually in your editor: {target}")
+    return target
+
+
+def refine_log_with_ai(project_root=None, target_file=None, prompt=None):
+    """Ask Gemini to rewrite a project log in a more polished or readable style without replacing the original record automatically."""
+    root = Path(project_root or Path.cwd())
+    target = Path(target_file) if target_file else (list_log_files(root)[0] if list_log_files(root) else None)
+    if target is None or not target.exists():
+        raise FileNotFoundError("No log file is available to refine.")
+
+    content = target.read_text(encoding="utf-8", errors="ignore")
+    prompt_text = prompt or "Rewrite this engineering log to be clearer, more polished, and easier for a recruiter or hiring manager to scan. Preserve the technical truth and keep the project story honest."
+
+    try:
+        api_key = get_api_key()
+        if not api_key:
+            raise Exception("No API key configured.")
+
+        client = genai.Client(api_key=api_key)
+        response = client.chats.create(model="gemini-2.5-flash").send_message(
+            f"You are editing an engineering log for clarity and story. Preserve facts and improve readability.\n\nOriginal log:\n{content}\n\nRequested edit:\n{prompt_text}\n\nReturn only the revised markdown."
+        )
+        revised = response.text.strip()
+        if revised:
+            return revised
+    except Exception:
+        pass
+
+    return content
+
+
+def gather_project_context(project_root=None, max_log_files=3):
+    """Pull together a concise project briefing from README, recent logs, and screenshot names."""
+    root = Path(project_root or Path.cwd())
+    parts = []
+
+    readme_path = root / "README.md"
+    if readme_path.exists():
+        try:
+            parts.append(f"# README\n{readme_path.read_text(encoding='utf-8', errors='ignore')[:2500]}")
+        except OSError:
+            pass
+
+    log_files = list_log_files(root)[:max_log_files]
+    if log_files:
+        log_text = []
+        for log_file in log_files:
+            try:
+                log_text.append(f"# {log_file.name}\n{log_file.read_text(encoding='utf-8', errors='ignore')[:2500]}")
+            except OSError:
+                pass
+        parts.append("\n\n".join(log_text))
+
+    screenshot_dir = root / "screenshots"
+    if screenshot_dir.exists():
+        screenshots = sorted(screenshot_dir.iterdir(), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)[:10]
+        if screenshots:
+            names = "\n".join(f"- {s.name}" for s in screenshots)
+            parts.append(f"# Recent screenshots\n{names}")
+
+    return "\n\n".join(parts) if parts else "No project context was found."
+
+
+def generate_assistant_plan(project_root=None, user_question=None, project_name=None):
+    """Use Gemini to turn project context into concrete next steps and milestone guidance."""
+    root = Path(project_root or Path.cwd())
+    name = project_name or root.name
+    question = user_question or "What should I do next to finish this project well?"
+    context = gather_project_context(root)
+
+    try:
+        api_key = get_api_key()
+        if not api_key:
+            raise Exception("No API key configured.")
+
+        client = genai.Client(api_key=api_key)
+        prompt = f"""
+You are AutoDoc Assist, an AI project guide inside a development workflow.
+
+Project name: {name}
+User request: {question}
+
+Use this project context to create a practical next-step plan:
+{context[:8000]}
+
+Return a clear markdown plan with these sections:
+1. Current status
+2. Immediate next step
+3. Recommended work sequence
+4. Risks or blockers to watch
+5. Evidence to capture
+6. Next steps
+
+Keep it helpful, concise, and grounded in the actual project context. Focus on what to do next rather than abstract strategy.
+"""
+        response = client.chats.create(model="gemini-2.5-flash").send_message(prompt)
+        return response.text.strip() or "No plan generated."
+    except Exception:
+        fallback = f"""# {name} — AutoDoc Assist plan
+
+## Current status
+The project is active and can be advanced with a clear next milestone.
+
+## Immediate next step
+Pick the single most important task that moves the project closer to completion, then finish one small, testable piece of it.
+
+## Recommended work sequence
+1. Review the README, recent logs, and latest screenshot evidence.
+2. Identify the next high-value task that builds momentum.
+3. Start a focus session and make the smallest meaningful progress.
+4. Capture at least one proof screenshot and one short log entry.
+5. Review what changed and decide the next milestone.
+
+## Risks or blockers to watch
+- Scope creep
+- Missing proof or weak documentation
+- Too many tasks in one working block
+
+## Evidence to capture
+- one screenshot of the current milestone
+- one note explaining what changed
+- one note explaining why this matters
+
+## Next steps
+- Define the next finished milestone
+- update the README status
+- keep the log and visual proof current
+"""
+        return fallback
+
+
 def review_ai_output(ai_output):
     """Allow the user to review and record AI-generated content"""
 
@@ -449,6 +835,223 @@ def review_ai_output(ai_output):
 
     return review
 
+
+def write_assistant_plan_log(project_root, question, plan, decision="Pending review"):
+    """Keep a single project-level plan journal so each prompt and plan remains reviewable without creating multiple files."""
+    output_path = Path(project_root) / "assistant-plan.md"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    entry = f"""## {timestamp}
+
+### Prompt
+{question}
+
+### Proposed plan
+{plan}
+
+### Decision
+{decision}
+"""
+
+    existing = output_path.read_text(encoding="utf-8", errors="ignore") if output_path.exists() else "# AutoDoc Assist Log\n"
+    if "# AutoDoc Assist Log" not in existing:
+        existing = "# AutoDoc Assist Log\n" + existing
+
+    output_path.write_text(existing.rstrip() + "\n\n" + entry.rstrip() + "\n", encoding="utf-8")
+    return output_path
+
+
+@click.command()
+@click.option("--prompt", "prompt_text", default=None, help="Prompt AutoDoc Assist with what you want to do next.")
+@click.option("--auto-approve", is_flag=True, default=False, help="Accept the generated plan immediately without prompting for review.")
+def assist(prompt_text, auto_approve):
+    """Ask AutoDoc Assist for a plan, review it, and keep the discussion in one project log."""
+    project_root = Path.cwd()
+    project_name = project_root.name
+    question = prompt_text or click.prompt("What do you want help with right now?", default="What should I do next to move this project forward?", show_default=True)
+
+    plan = generate_assistant_plan(project_root=project_root, user_question=question, project_name=project_name)
+
+    if not auto_approve:
+        review_choice = click.prompt(
+            "Review this plan: [approve] keep it, [regenerate], [edit], or [quit]",
+            default="approve",
+            show_default=True,
+        ).strip().lower()
+
+        if review_choice in {"quit", "q"}:
+            decision = "Deferred: user exited before approval"
+            write_assistant_plan_log(project_root, question, plan, decision)
+            click.echo("AutoDoc Assist plan saved for later review.")
+            return
+
+        if review_choice in {"regenerate", "r"}:
+            follow_up = click.prompt("Give AutoDoc Assist a more specific angle or constraint", default="Make the plan more realistic and lower risk.", show_default=True)
+            plan = generate_assistant_plan(project_root=project_root, user_question=f"{question} Additional guidance: {follow_up}", project_name=project_name)
+            decision = "Regenerated after review"
+        elif review_choice in {"edit", "e"}:
+            edited_plan = click.prompt("Edit the plan text in-place", default=plan, show_default=False)
+            plan = edited_plan.strip() or plan
+            decision = "Edited by user"
+        else:
+            decision = "Approved by user"
+    else:
+        decision = "Approved automatically"
+
+    output_path = write_assistant_plan_log(project_root, question, plan, decision)
+
+    click.echo("\n" + "=" * 60)
+    click.echo("AutoDoc Assist")
+    click.echo("=" * 60)
+    click.echo(plan)
+    click.echo("=" * 60)
+    click.echo(f"Recorded in: {output_path}")
+
+
+@click.group()
+def project():
+    """Project finish, status, and summary commands."""
+
+
+@project.command("complete")
+@click.option("--name", default=None, help="Project name to use in the README and summary.")
+@click.option("--status", default="Complete", show_default=True, help="Project completion status to display.")
+@click.option("--summary", default=None, help="Optional custom project summary to override the AI-generated writeup.")
+@click.option("--format", "output_format", type=click.Choice(["short", "long", "both"], case_sensitive=False), default="both", show_default=True, help="Which project summary format to generate.")
+def project_complete(name, status, summary, output_format):
+    """Generate a short hiring summary and a longer story-based engineering summary."""
+    project_name = name or Path.cwd().name
+    project_root = Path.cwd()
+    story = summary or generate_project_completion_story(project_root, project_name)
+    lessons = []
+    if "lessons learned" in story.lower():
+        lessons = [
+            "Document decisions as they happen so a later handoff reads naturally.",
+            "Capture proof in the moment with screenshots and structured notes.",
+            "Use the README as the public landing page for project status and impact.",
+        ]
+    else:
+        lessons = [
+            "Keep documentation close to delivery.",
+            "Use screenshots as proof points.",
+            "Write the story in plain language for future employers and collaborators.",
+        ]
+
+    next_steps = [
+        "Share the completed project summary in the README and release notes.",
+        "Capture any final cleanup or deployment follow-up items.",
+        "Keep logs fresh for future review and hiring conversations.",
+    ]
+
+    output_dir = project_root / "docs"
+    output_dir.mkdir(exist_ok=True)
+    short_path = output_dir / "project-complete-short.md"
+    long_path = output_dir / "project-complete-long.md"
+
+    if output_format in {"short", "both"}:
+        short_markdown = build_project_completion_markdown(
+            project_root=project_root,
+            project_name=project_name,
+            status=status,
+            narrative=story,
+            lessons=lessons,
+            next_steps=next_steps,
+            output_path=short_path,
+            long_form=False,
+        )
+        short_path.write_text(short_markdown, encoding="utf-8")
+        update_project_readme(project_root=project_root, project_name=project_name, narrative=story, status=status)
+        click.echo(f"Short project pager saved to: {short_path}")
+
+    if output_format in {"long", "both"}:
+        long_markdown = build_project_completion_markdown(
+            project_root=project_root,
+            project_name=project_name,
+            status=status,
+            narrative=story,
+            lessons=lessons,
+            next_steps=next_steps,
+            output_path=long_path,
+            long_form=True,
+        )
+        long_path.write_text(long_markdown, encoding="utf-8")
+        click.echo(f"Long project story saved to: {long_path}")
+
+    if output_format == "both":
+        click.echo(f"README updated with the short summary and status: {status}")
+    elif output_format == "short":
+        click.echo(f"README updated with status: {status}")
+
+
+@click.group()
+def logs():
+    """List, open, and refine project logs."""
+
+
+@logs.command("list")
+def logs_list():
+    """List the project logs in reverse chronological order."""
+    entries = list_log_files(Path.cwd())
+    if not entries:
+        click.echo("No project logs found in ./logs")
+        return
+    for path in entries:
+        click.echo(path.name)
+
+
+@logs.command("open")
+@click.argument("path", required=False)
+def logs_open(path):
+    """Open the most recent log or a specific one in your editor."""
+    root = Path.cwd()
+    if path:
+        target = root / path
+    else:
+        targets = list_log_files(root)
+        target = targets[0] if targets else None
+    if target is None or not target.exists():
+        raise click.ClickException("No log file is available to open.")
+    open_log_for_editing(target)
+    click.echo(f"Opened: {target}")
+
+
+@logs.command("edit")
+@click.argument("path", required=False)
+@click.option("--prompt", default=None, help="Optional prompt for AI-assisted log refinement.")
+def logs_edit(path, prompt):
+    """Open the log for manual editing, optionally refining it with Gemini."""
+    root = Path.cwd()
+    if path:
+        target = root / path
+    else:
+        targets = list_log_files(root)
+        target = targets[0] if targets else None
+    if target is None or not target.exists():
+        raise click.ClickException("No log file is available to edit.")
+
+    if prompt:
+        refined = refine_log_with_ai(project_root=root, target_file=target, prompt=prompt)
+        target.write_text(refined, encoding="utf-8")
+        click.echo(f"AI-assisted revision saved to {target}")
+
+    open_log_for_editing(target)
+    click.echo(f"Ready for manual review: {target}")
+
+
+@logs.command("refine")
+@click.argument("edit_prompt", required=False)
+@click.option("--file", default=None, help="Specific log file to refine.")
+def logs_refine(edit_prompt, file):
+    """Ask Gemini to rewrite a log entry for clarity and stronger narrative."""
+    target = Path(file) if file else None
+    prompt = edit_prompt or "Rewrite this log entry in a clearer, polished format for a technical narrative and hiring review."
+    root = Path.cwd()
+    refined = refine_log_with_ai(project_root=root, target_file=target, prompt=prompt)
+    if target is None:
+        target = list_log_files(root)[0]
+    target.write_text(refined, encoding="utf-8")
+    click.echo(f"AI refinement complete: {target}")
+
+
 @click.group()
 def cli():
     """
@@ -458,7 +1061,10 @@ Commands:
   init     Initialize AutoDoc project
   start    Start focus session
   finish   Finish session and generate logs
+  pause    Pause or resume an active focus session
   log      Quick engineering log
+  logs     List, open, and refine project logs
+  project  Generate short and long project completion summaries
   stats    Show statistics
   status   Show project status
   test     Run test command and diagnose errors
@@ -1408,6 +2014,9 @@ cli.add_command(screenshot_workflow)
 cli.add_command(screenshot_command)
 cli.add_command(propose)
 cli.add_command(monitor)
+cli.add_command(assist)
+cli.add_command(project)
+cli.add_command(logs)
 cli.add_command(repo)
 
 if __name__ == "__main__":

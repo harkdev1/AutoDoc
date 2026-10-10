@@ -1,19 +1,3 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 
-setup(
-    name="autodoc",
-    version="0.1.0",
-    packages=find_packages(),
-    include_package_data=True,
-    install_requires=[
-        "click",
-        "google-genai",
-        "Pillow",
-    ],
-    entry_points={
-        "console_scripts": [
-            "autodoc=autodoc.cli:cli",
-            "autodoc-public=autodoc.public_cli:cli",
-        ],
-    },
-)
+setup()

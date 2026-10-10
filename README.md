@@ -1,132 +1,38 @@
 # AutoDoc
 
-AI-assisted engineering documentation and session tracking from the command line.
+AutoDoc is an AI-assisted engineering workflow for turning daily technical work into structured, reviewable project documentation.
 
-AutoDoc helps turn day-to-day technical work into structured, searchable project documentation without requiring engineers to stop and manually write everything from scratch.
+It helps you:
 
-## Why AutoDoc?
+- start a focused work session
+- record project context and screenshots
+- capture notes and milestones in daily logs
+- ask Gemini for next steps and project guidance
+- generate short or long project completion summaries
+- keep the project README as a useful landing page
 
-Technical work often gets completed faster than it gets documented.
+## Why this exists
 
-AutoDoc provides a repeatable workflow for:
+Most technical work is done quickly, but documentation often lags behind. AutoDoc gives you a lightweight workflow to capture that progress while it is happening instead of trying to reconstruct it later.
 
-- Planning focused engineering sessions
-- Tracking time and progress
-- Turning rough notes into structured documentation with Gemini
-- Capturing terminal test results and diagnosing errors with AI
-- Maintaining project logs and statistics
-- Automatically recording work in Git
-
-## Features
-
-### Focus Sessions
-
-Start a structured work session with:
-
-- Session goals
-- Definition of Done
-- Dependencies and blockers
-- Technical context
-- AI-assisted time estimation
-- Timeboxing
-
-### AI-Assisted Documentation
-
-At the end of a session, provide rough notes and AutoDoc uses Gemini to generate structured engineering documentation:
-
-- Summary
-- Tasks Completed
-- Issues Encountered
-- Next Steps
-- Notes
-
-If AI generation fails, AutoDoc falls back to manual documentation.
-
-### AI Error Diagnosis
-
-Run a command through AutoDoc's test runner and capture its output.
-
-When an error occurs, AutoDoc can send the error to Gemini for:
-
-- Cause analysis
-- Recommended fixes
-- Next checks
-- Example commands
-
-### Automatic Project Documentation
-
-AutoDoc maintains:
-
-- Daily engineering logs
-- CHANGELOG
-- Project statistics
-- Documentation dashboard
-- Session handover notes
-
-### Git Automation
-
-AutoDoc automatically creates Git commits when logging work, helping maintain a historical record of project activity.
-
-## Workflow
-
-```text
-Start Session
-      ↓
-Define Goal & Timebox
-      ↓
-Perform Technical Work
-      ↓
-Finish Session
-      ↓
-Enter Rough Notes
-      ↓
-Gemini Generates Documentation
-      ↓
-Update Logs / Stats / Changelog
-      ↓
-Git Commit
-```
-
-## AI Governance
-
-AutoDoc treats AI-generated content as a draft, not authoritative documentation.
-
-AI proposes → Human validates → AutoDoc records
-
-## Commands
-
-```text
-autodoc init      Initialize a project
-autodoc start     Start a focus session
-autodoc finish    Finish a session and generate documentation
-autodoc log       Create a quick engineering log
-autodoc test      Run a command and analyze errors
-autodoc doctor    Check project health
-autodoc status    Show project status
-autodoc stats     Show detailed statistics
-autodoc version   Show AutoDoc version
-autodoc monitor   Capture optional activity snapshots during work
-```
-
-### One-Command GitHub Setup
-
-After creating or entering a project, install and authenticate the GitHub CLI
-once, then let AutoDoc handle the rest:
+## Quick start
 
 ```powershell
-gh auth login
-autodoc repo create --name my-project --private --auto-sync
+py -3.14 -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .
+autodoc --help
 ```
 
-This initializes Git, creates the GitHub repository, pushes the initial project,
-and enables automatic `git push` after each successful `autodoc finish` commit.
-Use `autodoc repo status` to check the setting or `autodoc repo sync` to push
-manually. Review `.gitignore` before enabling sync so secrets and local state are
-excluded.
+If you already have the virtual environment activated, the normal entry point is:
 
-### Simple Session Rhythm
+```powershell
+autodoc --help
+```
 
-For a new project, the shortest workflow is:
+## Core workflow
 
 ```powershell
 autodoc init
@@ -134,75 +40,145 @@ autodoc start
 autodoc pause
 autodoc screenshot
 autodoc finish
+autodoc logs
+autodoc assist
 ```
 
-During a session, `pause` toggles pause/resume, `screenshot` asks for a short
-description and names the image automatically, and `finish` guides you through
-what happened, what was difficult, what the AI missed, and what story the work
-should tell. Gemini assists with the final summary; human approval remains
-required.
+A simple rhythm is:
 
-### Passive Activity Capture
+1. initialize the project
+2. start a focus session
+3. work in short, meaningful blocks
+4. capture screenshots or notes as you go
+5. finish the session and log what happened
+6. ask AutoDoc Assist what to do next
 
-AutoDoc can optionally capture low-resolution screen snapshots while you work:
+## Current CLI commands
+
+These are the commands currently exposed by the app:
+
+```text
+autodoc assist               Ask AutoDoc Assist for a practical next-step plan.
+autodoc demo                 Run the AutoDoc guided showcase.
+autodoc doctor               Check AutoDoc project health.
+autodoc finish               Finish AutoDoc session and log work.
+autodoc init                 Initialize AutoDoc in the current directory.
+autodoc log                  Create or append a daily engineering log.
+autodoc logs                 List, open, and refine project logs.
+autodoc monitor              Capture optional, local-only activity snapshots.
+autodoc pause                Pause or resume the active focus session.
+autodoc project              Project finish, status, and summary commands.
+autodoc propose              Generate an AI implementation proposal for a feature.
+autodoc repo                 Create and sync the Git repository for the current project.
+autodoc screenshot           Capture one named screenshot and add it to today's log.
+autodoc screenshot-workflow Capture screenshots and add Markdown references to logs.
+autodoc self-test            Run a quick AutoDoc health and integration test.
+autodoc setup                Configure AutoDoc for first use.
+autodoc start                Start an AutoDoc focus session.
+autodoc stats                Show detailed AutoDoc stats.
+autodoc status               Show AutoDoc status.
+autodoc test                 Run a test command and analyze output.
+autodoc version              Show AutoDoc version.
+```
+
+## Project commands
+
+The `project` command is for completion and status summaries:
 
 ```powershell
-autodoc monitor start --interval 30
-autodoc monitor status
-autodoc monitor stop
+autodoc project complete --format both
 ```
 
-The command asks for explicit consent before starting. It keeps a limited number
-of compressed snapshots in memory, saves one contact sheet when stopped, and does
-not save a video. Screen capture can include private information, so stop it
-before entering passwords, API keys, or other sensitive material.
+This creates a short and long project summary and refreshes the README summary toward the top so the repository landing page reads like a project overview instead of a raw backlog dump.
+
+## AutoDoc Assist
+
+The `assist` command is the AI planning layer. It reads project context from the README, recent logs, and screenshot names, then helps answer questions such as:
+
+```powershell
+autodoc assist --prompt "What should I do next to finish this project well?"
+```
+
+It writes the latest plan to a single file at the project root:
+
+```text
+assistant-plan.md
+```
+
+Each new prompt overwrites the file so it stays lightweight and easy to iterate with Gemini.
+
+## Features
+
+### Focus sessions
+
+- define a goal and timebox
+- capture blockers and dependencies
+- review progress at the end of the session
+- keep decisions tied to actual effort and dates
+
+### AI-generated documentation
+
+AutoDoc can turn rough notes into structured output such as:
+
+- summary
+- tasks completed
+- issues encountered
+- next steps
+- notes
+
+### Logs and evidence
+
+AutoDoc keeps project records in Markdown, including:
+
+- daily engineering logs
+- session history
+- screenshot references
+- proof points for later review
+
+### Project summaries
+
+- short pager for quick status review
+- long-form story based on timeline and logs
+- README refresh for project landing pages
+
+### Git and repo tools
+
+Support for repo initialization and sync is built in where the workflow needs it.
 
 ## Requirements
 
 - Python
 - Git
-- Gemini API key
+- Gemini API key for the main developer CLI
 
-AutoDoc currently uses Google's Gemini API for AI-assisted documentation and error diagnosis.
+The public edition provides a safer local-only workflow and does not require the Gemini API in the same way.
 
-## Project Structure
+## Project structure
 
 ```text
 AutoDoc/
-├── autodoc/              Application source
-├── logs/                 Engineering logs
-├── screenshots/          Session evidence
-├── docs/                 Generated dashboard
+├── autodoc/              CLI and workflow source
+├── logs/                 Daily engineering logs
+├── screenshots/          Evidence and proof captures
+├── docs/                 Generated summaries and notes
 ├── .autodoc/             Local project state
+├── README.md             GitHub landing page
 ├── CHANGELOG.md          Project history
-├── README.md             Project documentation
 ├── requirements.txt      Python dependencies
-└── setup.py              Package configuration
+├── setup.py              Packaging metadata
+├── pyproject.toml        Modern project config
+├── public_edition/       Local-first public edition
+└── autodoc-test/         Example project used for validation
 ```
+
+## Public edition
+
+A local-first public variant is included under the `public_edition` folder for safe experimentation without touching the main project state.
 
 ## Status
 
-AutoDoc is an actively developed MVP.
+AutoDoc is currently an active CLI workflow tool with AI-assisted project management, documentation, and evidence capture built around a practical engineering rhythm.
 
-The current focus is making the existing CLI workflow reliable, presentable, and useful for real engineering work.
-
-## Future Direction
-
-Potential future development includes a more convenient interface, multi-project management, and additional AI-assisted workflows.
-
-The CLI remains the core application and workflow engine.
-
-## Public Edition
-
-AutoDoc Public Edition is a local-first distribution target for experimentation.
-It uses a separate `.autodoc-public/` state directory and does not require a
-Gemini API key. It never stages files automatically; Git commits require files
-to be staged explicitly first.
-
-Run it from a checkout with:
-
-```powershell
-python .\autodoc\public_cli.py --help
-```
+This repository is meant to be easy to use, quick to iterate on, and polished enough for GitHub-first visibility.
 
 See [docs/public-edition.md](docs/public-edition.md) for packaging instructions.

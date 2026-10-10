@@ -36,9 +36,19 @@ GITHUB_CLIENT_ID = os.getenv("AUTODOC_GITHUB_CLIENT_ID", "")
 
 
 class PublicApp(tk.Tk):
+    @staticmethod
+    def explain_gemini_error(error):
+        message = str(error).lower()
+        if any(token in message for token in ("401", "unauthenticated", "invalid authentication credentials", "access_token_type_unsupported", "api key")):
+            return (
+                "Your Gemini API key appears invalid, expired, or incompatible with the current auth flow. "
+                "Update it in Settings, then try again. AutoDoc will keep your notes and use the local fallback instead."
+            )
+        return f"Gemini could not complete the request: {error}\n\nAutoDoc will keep your notes and use a simple local format instead."
+
     def __init__(self):
         super().__init__()
-        self.title("AutoDoc Public Edition")
+        self.title(f"AutoDoc Public Edition - {public_cli.VERSION}")
         self.geometry("980x640")
         self.minsize(760, 520)
         self.configure(bg="#f5f7fb")
@@ -81,7 +91,8 @@ class PublicApp(tk.Tk):
         sidebar.pack_propagate(False)
 
         ttk.Label(sidebar, text="AutoDoc", style="Sidebar.TLabel", font=("Segoe UI", 20, "bold")).pack(anchor="w", padx=22, pady=(28, 2))
-        ttk.Label(sidebar, text="PUBLIC EDITION", style="Sidebar.TLabel", font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=24, pady=(0, 35))
+        ttk.Label(sidebar, text=f"Version {public_cli.VERSION}", style="Sidebar.TLabel", font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=24, pady=(0, 4))
+        ttk.Label(sidebar, text="PUBLIC EDITION", style="Sidebar.TLabel", font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=24, pady=(0, 30))
         for label, page in (("Project Hub", self.show_project_hub), ("Focus Session", self.show_session), ("Work Shift", self.show_shift), ("Journal", self.show_logs), ("Vibe Code", self.show_vibe_code), ("Settings", self.show_settings)):
             button = ttk.Button(sidebar, text=label, style="Nav.TButton", command=page)
             button.pack(fill="x", padx=10, pady=2)
@@ -577,7 +588,7 @@ the Completed input is empty. Never summarize planned or future work as complete
                     formatted = f"### Brief Summary\n{safe_summary}\n\n### Planned for Today{after_planned}" if separator else formatted
             return formatted, ""
         except Exception as error:
-            return "", f"Gemini could not format the journal: {error}"
+            return "", self.explain_gemini_error(error)
 
     def local_work_shift_format(self, state):
         sections = ["### Brief Summary", "Today's work was recorded from the shift lists."]
@@ -589,7 +600,7 @@ the Completed input is empty. Never summarize planned or future work as complete
     def review_finished_shift(self, state, categories, start_time, end_time, formatted, error, loading):
         loading.destroy()
         if error:
-            messagebox.showwarning("Gemini unavailable", f"{error}\n\nAutoDoc will keep your notes and use a simple local format instead.")
+            messagebox.showwarning("Gemini unavailable", error)
             formatted = self.local_work_shift_format(state)
         review = self.open_review_dialog(formatted)
         if review is None:
@@ -631,7 +642,7 @@ the Completed input is empty. Never summarize planned or future work as complete
                 raise ValueError("Gemini returned an empty summary.")
             return response.text.strip()
         except Exception as error:
-            return f"Gemini summary failed: {error}. Original notes preserved:\n{notes}"
+            return f"{self.explain_gemini_error(error)}\n\nOriginal notes preserved:\n{notes}"
 
     def show_continue(self):
         self.clear_content()

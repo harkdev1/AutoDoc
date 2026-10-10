@@ -79,6 +79,21 @@ Review AI output before saving or applying it.
 If Gemini is unavailable, AutoDoc reports the reason and keeps the original notes;
 work-shift entries use a simple local formatter as a fallback.
 
+## AI Planning as a Reviewable Log
+
+AutoDoc Public Edition treats AI as a planning partner, not a silent operator.
+When a project plan or next-step recommendation is generated, the result is kept
+in a single local plan log rather than being silently executed. That gives you a
+clear audit trail of:
+
+- what you asked
+- what the AI proposed
+- whether you approved, edited, or regenerated it
+- what you ultimately decided to do next
+
+This keeps the workflow transparent and avoids the frustrating pattern of a model
+making a recommendation and the user agreeing without any record of the decision.
+
 ## GitHub
 
 GitHub is optional. The app can use GitHub device sign-in when a public OAuth
