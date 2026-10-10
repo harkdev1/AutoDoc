@@ -577,6 +577,47 @@ Status: {status}
     return markdown
 
 
+def write_project_completion_documents(project_root=None, project_name=None, status="Complete", narrative="", lessons=None, next_steps=None, short_path=None, long_path=None):
+    """Keep the short file as the current project snapshot and append the long file as the project history."""
+    root = Path(project_root or Path.cwd())
+    project_name = project_name or root.name
+    short_file = Path(short_path) if short_path else root / "docs" / "project-complete-short.md"
+    long_file = Path(long_path) if long_path else root / "docs" / "project-complete-long.md"
+    short_file.parent.mkdir(parents=True, exist_ok=True)
+    long_file.parent.mkdir(parents=True, exist_ok=True)
+
+    short_markdown = build_project_completion_markdown(
+        project_root=root,
+        project_name=project_name,
+        status=status,
+        narrative=narrative,
+        lessons=lessons,
+        next_steps=next_steps,
+        output_path=short_file,
+        long_form=False,
+    )
+    short_file.write_text(short_markdown, encoding="utf-8")
+
+    long_markdown = build_project_completion_markdown(
+        project_root=root,
+        project_name=project_name,
+        status=status,
+        narrative=narrative,
+        lessons=lessons,
+        next_steps=next_steps,
+        output_path=long_file,
+        long_form=True,
+    )
+
+    existing_long = long_file.read_text(encoding="utf-8", errors="ignore").strip() if long_file.exists() else ""
+    if existing_long:
+        combined = long_markdown + "\n\n---\n\n" + existing_long + "\n"
+    else:
+        combined = long_markdown + "\n"
+    long_file.write_text(combined, encoding="utf-8")
+    return short_markdown, combined
+
+
 def update_project_readme(project_root=None, project_name=None, narrative="", status="Complete"):
     """Promote the completed project summary to the top of README.md so it acts as the project landing page."""
     root = Path(project_root or Path.cwd())
@@ -605,6 +646,80 @@ def update_project_readme(project_root=None, project_name=None, narrative="", st
 
     readme_path.write_text(summary + existing.strip() + "\n", encoding="utf-8")
     return summary + existing.strip() + "\n"
+
+
+def refresh_readme_after_session(project_root=None, project_name=None, session_summary="", status="In progress"):
+    """Lightweight, automatic README refresh after each session without replacing the whole project story."""
+    root = Path(project_root or Path.cwd())
+    project_name = project_name or root.name
+    readme_path = root / "README.md"
+    summary_text = session_summary.strip() or "No session summary recorded yet."
+    summary_block = f"""# {project_name}
+
+## Status: {status}
+
+## Latest session
+{summary_text}
+
+---
+
+"""
+
+    if not readme_path.exists():
+        readme_path.write_text(summary_block, encoding="utf-8")
+        return summary_block
+
+    existing = readme_path.read_text(encoding="utf-8", errors="ignore").strip()
+    if "## Latest session" in existing or "## Status: " in existing:
+        pattern = re.compile(r"^# .+?\n\n## Status: .*?\n\n## (?:Latest session|Project summary)\n.*?(?:\n---\n)?", re.S)
+        existing = pattern.sub("", existing).strip()
+
+    updated = summary_block + (existing + "\n" if existing else "")
+    readme_path.write_text(updated, encoding="utf-8")
+    return updated
+
+
+def refresh_project_status_file(project_root=None, project_name=None, session_summary="", status="In progress", date_str=None, notes="", where_left_off=""):
+    """Keep a project-status journal at the repo root so each session contributes to the project's living story."""
+    root = Path(project_root or Path.cwd())
+    project_name = project_name or root.name
+    status_path = root / "project-status.md"
+    summary_text = session_summary.strip() or "No session summary recorded yet."
+    today = date_str or datetime.now().strftime("%Y-%m-%d")
+
+    current_entry = f"""## Session – {today}
+
+### Status: {status}
+
+### Session summary
+{summary_text}
+
+### Notes
+{notes.strip() or 'No extra notes recorded.'}
+
+### Where we left off
+{where_left_off.strip() or 'No handoff note captured yet.'}
+
+---
+
+"""
+
+    if not status_path.exists():
+        header = f"# {project_name} Project Status\n\nThis file records the live project journey and is updated after every AutoDoc finish.\n\n"
+        status_path.write_text(header + current_entry, encoding="utf-8")
+        return header + current_entry
+
+    existing = status_path.read_text(encoding="utf-8", errors="ignore").strip()
+    if "## Session – " in existing:
+        existing = re.sub(r"\n?## Session – .*?(?:\n---\n|\Z)", "", existing, flags=re.S)
+
+    if not existing or existing.strip() == "":
+        updated = f"# {project_name} Project Status\n\nThis file records the live project journey and is updated after every AutoDoc finish.\n\n" + current_entry
+    else:
+        updated = existing + "\n" + current_entry
+
+    status_path.write_text(updated, encoding="utf-8")
+    return updated
 
 
 def generate_project_completion_story(project_root=None, project_name=None):
@@ -947,33 +1062,19 @@ def project_complete(name, status, summary, output_format):
     short_path = output_dir / "project-complete-short.md"
     long_path = output_dir / "project-complete-long.md"
 
-    if output_format in {"short", "both"}:
-        short_markdown = build_project_completion_markdown(
+    if output_format in {"short", "long", "both"}:
+        short_markdown, _ = write_project_completion_documents(
             project_root=project_root,
             project_name=project_name,
             status=status,
             narrative=story,
             lessons=lessons,
             next_steps=next_steps,
-            output_path=short_path,
-            long_form=False,
+            short_path=short_path,
+            long_path=long_path,
         )
-        short_path.write_text(short_markdown, encoding="utf-8")
         update_project_readme(project_root=project_root, project_name=project_name, narrative=story, status=status)
         click.echo(f"Short project pager saved to: {short_path}")
-
-    if output_format in {"long", "both"}:
-        long_markdown = build_project_completion_markdown(
-            project_root=project_root,
-            project_name=project_name,
-            status=status,
-            narrative=story,
-            lessons=lessons,
-            next_steps=next_steps,
-            output_path=long_path,
-            long_form=True,
-        )
-        long_path.write_text(long_markdown, encoding="utf-8")
         click.echo(f"Long project story saved to: {long_path}")
 
     if output_format == "both":
@@ -1847,6 +1948,21 @@ Reviewer Notes: {review["notes"]}
     # Update stats + README
     update_stats(date_str, duration_minutes)
     update_readme_dashboard()
+    refresh_readme_after_session(
+        project_root=Path.cwd(),
+        project_name=Path.cwd().name,
+        session_summary=rough_notes.strip() or "Session completed and recorded in the project log.",
+        status="In progress",
+    )
+    refresh_project_status_file(
+        project_root=Path.cwd(),
+        project_name=Path.cwd().name,
+        session_summary=rough_notes.strip() or "Session completed and recorded in the project log.",
+        status="In progress",
+        date_str=date_str,
+        notes=notes,
+        where_left_off=where_left_off,
+    )
 
     # Git automation
     commit_created = False

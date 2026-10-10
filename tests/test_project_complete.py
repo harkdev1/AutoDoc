@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from autodoc.cli import build_project_completion_markdown, generate_assistant_plan, list_log_files
+from autodoc.cli import build_project_completion_markdown, generate_assistant_plan, list_log_files, refresh_project_status_file, refresh_readme_after_session, write_project_completion_documents
 
 
 class ProjectCompletionTests(unittest.TestCase):
@@ -66,6 +66,71 @@ class ProjectCompletionTests(unittest.TestCase):
             self.assertIn("Demo Project", plan)
             self.assertIn("Next steps", plan)
             self.assertIn("prototype", plan.lower())
+
+    def test_refresh_readme_after_session_updates_status_and_latest_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            readme = root / "README.md"
+            readme.write_text("# Original Project\n\nOld content stays below.\n", encoding="utf-8")
+
+            refreshed = refresh_readme_after_session(
+                project_root=root,
+                project_name="Original Project",
+                session_summary="Finished the API integration and documented the deployment notes.",
+                status="In progress",
+            )
+
+            self.assertIn("## Status: In progress", refreshed)
+            self.assertIn("Latest session", refreshed)
+            self.assertIn("Finished the API integration", refreshed)
+            self.assertIn("Old content stays below", refreshed)
+
+    def test_refresh_project_status_file_updates_session_journal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            status_path = root / "project-status.md"
+            status_path.write_text("# Project Status\n\nExisting project history stays below.\n", encoding="utf-8")
+
+            refreshed = refresh_project_status_file(
+                project_root=root,
+                project_name="Original Project",
+                session_summary="Finished the API integration and documented the deployment notes.",
+                status="In progress",
+                date_str="2026-10-10",
+                notes="Need the release checklist before shutdown.",
+            )
+
+            self.assertIn("## Status: In progress", refreshed)
+            self.assertIn("## Session summary", refreshed)
+            self.assertIn("Finished the API integration", refreshed)
+            self.assertIn("Existing project history stays below", refreshed)
+            self.assertIn("2026-10-10", refreshed)
+
+    def test_write_project_completion_documents_overwrites_short_and_appends_long(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "docs").mkdir()
+            short_path = root / "docs" / "project-complete-short.md"
+            long_path = root / "docs" / "project-complete-long.md"
+            short_path.write_text("old short\n", encoding="utf-8")
+            long_path.write_text("old long\n", encoding="utf-8")
+
+            write_project_completion_documents(
+                project_root=root,
+                project_name="Demo Project",
+                status="In progress",
+                narrative="Current sprint focus is securing the telemetry pipeline.",
+                lessons=["Capture evidence as work happens."],
+                next_steps=["Finish the telemetry validation pass."],
+                short_path=short_path,
+                long_path=long_path,
+            )
+
+            self.assertIn("Current sprint focus is securing the telemetry pipeline", short_path.read_text(encoding="utf-8"))
+            self.assertNotIn("old short", short_path.read_text(encoding="utf-8"))
+            long_text = long_path.read_text(encoding="utf-8")
+            self.assertIn("Current sprint focus is securing the telemetry pipeline", long_text)
+            self.assertIn("old long", long_text)
 
     def test_build_project_completion_markdown_long_form_includes_timeline_and_trials(self):
         with tempfile.TemporaryDirectory() as tmp:
