@@ -70,7 +70,7 @@ These are the commands currently exposed by the app:
 autodoc assist               Ask AutoDoc Assist for a practical next-step plan.
 autodoc demo                 Run the AutoDoc guided showcase.
 autodoc doctor               Check AutoDoc project health.
-autodoc finish               Finish AutoDoc session and log work.
+autodoc finish               Finish session, refresh project docs, and sync Roadmap gallery.
 autodoc init                 Initialize AutoDoc in the current directory.
 autodoc log                  Create or append a daily engineering log.
 autodoc logs                 List, open, and refine project logs.
@@ -99,6 +99,10 @@ autodoc project complete --format both
 ```
 
 This creates a short and long project summary and refreshes the README summary toward the top so the repository landing page reads like a project overview instead of a raw backlog dump.
+
+When a sibling `D:\Projects\roadmap` repository is present, `autodoc finish` and `autodoc project complete` also update that project's Roadmap gallery page and index, copy only screenshots referenced in the project's AutoDoc logs, verify the copied bytes, and push only the gallery files. AutoDoc asks once before publishing the listed screenshots; decline to update the text and log links without copying images. The gallery includes summaries parsed from the actual session logs and links each session back to the source GitHub log. This gallery update uses no additional Gemini request.
+
+Use `--skip-roadmap` to skip a particular sync or `--roadmap-dir PATH` to select the standalone Roadmap repository explicitly.
 
 ## AutoDoc Assist
 

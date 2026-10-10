@@ -1,5 +1,6 @@
 from datetime import datetime
 from io import BytesIO
+import hashlib
 import os
 import click
 import subprocess
@@ -1006,7 +1007,12 @@ Keep it helpful, concise, and grounded in the actual project context. Focus on w
 """
         response = client.chats.create(model="gemini-2.5-flash").send_message(prompt)
         return response.text.strip() or "No plan generated."
-    except Exception:
+    except Exception as exc:
+        click.echo(
+            f"\n[AutoDoc Assist diagnostic] Gemini request failed: "
+            f"{type(exc).__name__}: {exc}",
+            err=True,
+        )
         fallback = f"""# {name} — AutoDoc Assist plan
 
 ## Current status
@@ -1146,15 +1152,492 @@ def project():
     """Project finish, status, and summary commands."""
 
 
+def slugify_project_name(project_name):
+    """Turn a project display name into a stable gallery folder name."""
+    slug = re.sub(r"[^a-z0-9]+", "-", project_name.casefold()).strip("-")
+    if not slug:
+        raise ValueError("Project name must contain at least one ASCII letter or number.")
+    return slug
+
+
+def get_project_display_name(project_root):
+    """Prefer the project's README title while retaining a safe directory-name fallback."""
+    root = Path(project_root)
+    readme = root / "README.md"
+    if readme.is_file():
+        try:
+            match = re.search(r"(?m)^#\s+(.+?)\s*$", readme.read_text(encoding="utf-8", errors="ignore"))
+        except OSError:
+            match = None
+        if match:
+            return match.group(1).strip()
+    return root.name.replace("-", " ").replace("_", " ").title()
+
+
+ROADMAP_SHOWCASE_START = "<!-- autodoc:showcase:start -->"
+ROADMAP_SHOWCASE_END = "<!-- autodoc:showcase:end -->"
+PROJECT_SHOWCASE_START = "<!-- autodoc:project-showcase:start -->"
+PROJECT_SHOWCASE_END = "<!-- autodoc:project-showcase:end -->"
+EVIDENCE_GALLERY_START = "<!-- autodoc:evidence-gallery:start -->"
+EVIDENCE_GALLERY_END = "<!-- autodoc:evidence-gallery:end -->"
+PRIVATE_SCREENSHOT_NAME_PARTS = (
+    "activity_",
+    "pc-specs",
+    "users-and-groups",
+    "static-ip",
+    "dns-forward-lookup-zone",
+    "promoted-to-northstar-solutions-domain-c",
+    "system-troubleshooting",
+    "system-info-script-execution",
+    "windows-server-manager",
+    "week-1-windows-server-environment-completed",
+    "131044",
+)
+
+
+def collect_log_linked_screenshots(project_root):
+    """Return existing screenshot files referenced by AutoDoc logs, excluding known private captures."""
+    root = Path(project_root).resolve()
+    screenshot_root = (root / "screenshots").resolve()
+    references = []
+    seen = set()
+    pattern = re.compile(r"!\[(?P<caption>.*?)\]\((?P<path>[^)]+)\)")
+    for log_path in list_log_files(root):
+        try:
+            content = log_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for match in pattern.finditer(content):
+            target = match.group("path").strip().split("#", 1)[0]
+            if re.match(r"^[a-z]+://", target, flags=re.I):
+                continue
+            source_path = (log_path.parent / target).resolve()
+            try:
+                source_path.relative_to(screenshot_root)
+            except ValueError:
+                continue
+            if not source_path.is_file() or source_path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+                continue
+            if any(part in source_path.name.casefold() for part in PRIVATE_SCREENSHOT_NAME_PARTS):
+                continue
+            key = str(source_path).casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            references.append({
+                "source": source_path,
+                "caption": match.group("caption").strip() or source_path.stem.replace("_", " ").title(),
+                "log": log_path,
+            })
+    return references
+
+
+def copy_log_linked_screenshots(project_root, project_folder, screenshots):
+    """Copy only existing log-linked images and verify each transferred file byte-for-byte."""
+    source_root = Path(project_root).resolve()
+    screenshots_root = (source_root / "screenshots").resolve()
+    destination_root = Path(project_folder).resolve() / "screenshots"
+    copied = []
+    for item in screenshots:
+        source = Path(item["source"]).resolve()
+        try:
+            source.relative_to(screenshots_root)
+        except ValueError as error:
+            raise ValueError(f"Screenshot is outside the source screenshots folder: {source}") from error
+        if not source.is_file():
+            raise FileNotFoundError(f"Screenshot referenced by an AutoDoc log is missing: {source}")
+
+        target = destination_root / source.name
+        if target.exists():
+            source_digest = hashlib.sha256(source.read_bytes()).digest()
+            target_digest = hashlib.sha256(target.read_bytes()).digest()
+            if source_digest != target_digest:
+                raise ValueError(f"Existing gallery image differs from the source; refusing to overwrite: {target}")
+        else:
+            destination_root.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+        target_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+        if source_hash != target_hash:
+            raise OSError(f"Screenshot copy verification failed: {source.name}")
+        copied.append({**item, "gallery_path": target})
+    return copied
+
+
+def replace_managed_gallery_block(markdown, start_marker, end_marker, content, heading):
+    """Replace one AutoDoc-managed gallery block without disturbing surrounding README prose."""
+    start_count = markdown.count(start_marker)
+    end_count = markdown.count(end_marker)
+    if start_count != end_count or start_count > 1:
+        raise ValueError("Gallery README contains unbalanced AutoDoc markers.")
+    block = f"{start_marker}\n{content.strip()}\n{end_marker}"
+    if start_count:
+        pattern = re.compile(re.escape(start_marker) + r".*?" + re.escape(end_marker), re.S)
+        return pattern.sub(lambda _match: block, markdown, count=1).rstrip() + "\n"
+
+    heading_match = re.search(r"(?m)^" + re.escape(heading) + r"\s*$", markdown)
+    if heading_match:
+        insertion = heading_match.end()
+        return markdown[:insertion] + "\n\n" + block + "\n\n" + markdown[insertion:].lstrip("\n")
+    return markdown.rstrip() + f"\n\n{heading}\n\n{block}\n"
+
+
+def get_project_github_remote(project_root):
+    """Return a sanitized GitHub URL and current branch for a source project, if configured."""
+    result = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        return "", "main"
+    remote = result.stdout.strip()
+    https_match = re.fullmatch(r"https?://github\.com/([^/\s]+/[^/\s]+?)(?:\.git)?/?", remote, flags=re.I)
+    ssh_match = re.fullmatch(r"git@github\.com:([^/\s]+/[^/\s]+?)(?:\.git)?", remote, flags=re.I)
+    repository = (https_match or ssh_match)
+    if not repository:
+        return "", "main"
+    branch_result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    branch = branch_result.stdout.strip() if not branch_result.returncode else "main"
+    return f"https://github.com/{repository.group(1)}", branch or "main"
+
+
+def extract_project_next_steps(project_root):
+    """Read a few existing next-step bullets without inventing new project work."""
+    for relative_path in ("docs/project-complete-short.md", "project-status.md"):
+        path = Path(project_root) / relative_path
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        match = re.search(r"(?ms)^## Next steps\s*\n(.*?)(?=^## |\Z)", text)
+        if match:
+            lines = [line.strip() for line in match.group(1).splitlines() if line.strip()]
+            return "\n".join(lines[:6])
+    return "No explicit next steps recorded."
+
+
+def extract_log_session_summary(session_body, max_chars=700):
+    """Extract the recorded session summary and outcome without generating new claims."""
+    summary_match = re.search(
+        r"(?ms)^(?:Summary:|### Summary)\s*\n(.*?)(?=^(?:Tasks Completed:|Issues Encountered:|Next Steps:|Notes:|### Working Story|### Friction and AI Gaps|### What the AI Missed|### AI Peer Review|### Duration)\s*$|\Z)",
+        session_body,
+    )
+    summary = summary_match.group(1).strip() if summary_match else ""
+    if not summary:
+        story_match = re.search(r"(?ms)^### Working Story\s*\n(.*?)(?=^### |\Z)", session_body)
+        summary = story_match.group(1).strip() if story_match else ""
+    summary = re.sub(r"\s+", " ", summary)
+
+    outcome_match = re.search(r"(?m)^### Goal Achieved\s*\n([^\n]+)", session_body)
+    if outcome_match:
+        outcome = re.sub(r"[*_`]+", "", outcome_match.group(1)).strip()
+        if outcome:
+            summary = f"Recorded outcome: {outcome}. {summary}".strip()
+
+    if not summary:
+        summary = "No structured session summary was found in this log entry."
+    if len(summary) > max_chars:
+        summary = summary[:max_chars - 3].rsplit(" ", 1)[0] + "..."
+    return summary
+
+
+def build_project_showcase(project_root, project_name, status, narrative, screenshots, source_repo_url, source_branch):
+    """Create a concise case-study page with copied evidence and source-log provenance."""
+    root = Path(project_root)
+    slug = slugify_project_name(project_name)
+    story = narrative.strip() or f"{project_name} status: {status}. See the linked session logs for the recorded work."
+    lines = [
+        f"**{'Main Homelab · ' if slug == 'cyberops-sandbox' else ''}Status:** {status}",
+        f"**Source repository:** [{source_repo_url}]({source_repo_url})" if source_repo_url else "**Source repository:** Not linked; no GitHub origin was configured.",
+        "",
+        "## What I built",
+        story,
+        "",
+        "## Evidence gallery",
+    ]
+    if screenshots:
+        for item in screenshots:
+            gallery_name = Path(item["gallery_path"]).name
+            log_relative = Path(item["log"]).relative_to(root).as_posix()
+            log_link = f"{source_repo_url}/blob/{source_branch}/{log_relative}" if source_repo_url else f"../../../{root.name}/{log_relative}"
+            lines.extend([
+                f"### {item['caption']}",
+                f"![{item['caption']}](screenshots/{gallery_name})",
+                f"Evidence copied from [{log_relative}]({log_link}) and verified against the source image.",
+                "",
+            ])
+    else:
+        lines.append("No eligible screenshot references were approved for this gallery update.")
+        lines.append("")
+
+    timeline = collect_project_timeline(root)
+    if timeline:
+        lines.extend(["## Session highlights", ""])
+        for entry in timeline[:12]:
+            log_relative = f"logs/{entry['date']}.md"
+            if source_repo_url:
+                log_link = f"{source_repo_url}/blob/{source_branch}/{log_relative}"
+            else:
+                log_link = f"../../../{root.name}/{log_relative}"
+            session_summary = extract_log_session_summary(entry["body"])
+            lines.extend([
+                f"### {entry['date']} · {entry['stamp']}",
+                session_summary,
+                f"[Open the original AutoDoc log]({log_link})",
+                "",
+            ])
+
+    lines.extend([
+        "## Current limitations and next steps",
+        extract_project_next_steps(root),
+        "",
+        "## Project files",
+    ])
+    for filename, label in (
+        ("project-status.md", "Current project status"),
+        ("docs/project-complete-short.md", "Short project summary"),
+        ("docs/project-complete-long.md", "Full project history"),
+    ):
+        if (root / filename).is_file():
+            if source_repo_url:
+                file_link = f"{source_repo_url}/blob/{source_branch}/{filename}"
+            else:
+                file_link = f"../../../{root.name}/{filename}"
+            lines.append(f"- [{label}]({file_link})")
+    lines.append("- [Evidence index](evidence-index.md)")
+    lines.extend([
+        "",
+        "---",
+        "Screenshots are copied only from image references present in AutoDoc logs. Review each image for private details before publishing.",
+        f"Gallery folder: `projects/{slug}/screenshots/`.",
+    ])
+    return "\n".join(lines).strip() + "\n"
+
+
+def update_project_evidence_index(project_folder, project_root, project_name, screenshots, source_repo_url, source_branch):
+    """Create or refresh a visual index of copied log-linked images with their source-log provenance."""
+    gallery_folder = Path(project_folder)
+    project_root = Path(project_root)
+    index_path = gallery_folder / "evidence-index.md"
+    if index_path.is_file():
+        existing = index_path.read_text(encoding="utf-8", errors="ignore")
+    else:
+        existing = (
+            f"# {project_name} Evidence Index\n\n"
+            "Screenshots below are copied only when referenced by an AutoDoc source log. "
+            "Each transferred image is verified against its source bytes and linked back to that log.\n\n"
+            "## Transferred screenshots\n"
+        )
+
+    entries = []
+    for item in screenshots:
+        image_name = Path(item["gallery_path"]).name
+        log_relative = Path(item["log"]).relative_to(project_root).as_posix()
+        log_link = (
+            f"{source_repo_url}/blob/{source_branch}/{log_relative}"
+            if source_repo_url
+            else f"../../../{project_root.name}/{log_relative}"
+        )
+        description = describe_screenshot_context(item["source"], item["caption"])
+        entries.extend([
+            f"### {item['caption']}",
+            f"![{item['caption']}](screenshots/{image_name})",
+            description,
+            f"Source: [{log_relative}]({log_link}). Image copied from the log reference and SHA-256 verified.",
+            "",
+        ])
+    if not entries:
+        entries = ["No screenshots were approved for transfer. Source images remain in the project repository.\n"]
+
+    updated = replace_managed_gallery_block(
+        existing,
+        EVIDENCE_GALLERY_START,
+        EVIDENCE_GALLERY_END,
+        "\n".join(entries),
+        "## Transferred screenshots",
+    )
+    index_path.write_text(updated, encoding="utf-8")
+    return index_path
+
+
+def build_gallery_index_entry(project_name, project_slug, status, narrative, screenshots, source_repo_url):
+    story = re.sub(r"\s+", " ", narrative).strip()
+    if len(story) > 420:
+        story = story[:417].rsplit(" ", 1)[0] + "..."
+    lines = [
+        f"### [{project_name}](projects/{project_slug}/README.md)",
+        "",
+        f"**{'Main Homelab · ' if project_slug == 'cyberops-sandbox' else ''}{status}**" + (f" · [Source repository]({source_repo_url})" if source_repo_url else ""),
+        "",
+        story,
+    ]
+    if screenshots:
+        first_image = Path(screenshots[0]["gallery_path"]).name
+        caption = screenshots[0]["caption"]
+        lines.extend(["", f"[![{caption}](projects/{project_slug}/screenshots/{first_image})](projects/{project_slug}/README.md)"])
+    return "\n".join(lines)
+
+
+def update_roadmap_gallery(roadmap_root, project_root, project_name, status, narrative, approved_screenshots):
+    """Update a project's one-page Roadmap showcase, index card, and log-linked screenshot copies."""
+    roadmap_root = Path(roadmap_root).resolve()
+    project_root = Path(project_root).resolve()
+    if project_root == roadmap_root or project_root in roadmap_root.parents or roadmap_root in project_root.parents:
+        raise ValueError("Source project and Roadmap repository must remain separate, non-nested repositories.")
+    if not (roadmap_root / ".git").exists() or not (roadmap_root / "projects").is_dir():
+        raise ValueError(f"Roadmap path is not the expected standalone gallery repository: {roadmap_root}")
+
+    project_slug = slugify_project_name(project_name)
+    project_folder = (roadmap_root / "projects" / project_slug).resolve()
+    if project_folder.parent != (roadmap_root / "projects").resolve():
+        raise ValueError("Project gallery path escaped the Roadmap projects directory.")
+    guarded = ["README.md", f"projects/{project_slug}"]
+    dirty = subprocess.run(["git", "status", "--porcelain", "--", *guarded], cwd=roadmap_root, capture_output=True, text=True, check=True)
+    staged = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=roadmap_root, check=False)
+    if dirty.stdout.strip() or staged.returncode == 1:
+        raise ValueError("Roadmap gallery/index has local changes; review or commit them before AutoDoc overwrites or pushes it.")
+
+    project_folder.mkdir(parents=True, exist_ok=True)
+    copied_screenshots = copy_log_linked_screenshots(project_root, project_folder, approved_screenshots)
+    source_repo_url, source_branch = get_project_github_remote(project_root)
+    page_content = build_project_showcase(
+        project_root,
+        project_name,
+        status,
+        narrative,
+        copied_screenshots,
+        source_repo_url,
+        source_branch,
+    )
+    project_readme = project_folder / "README.md"
+    existing_project_page = project_readme.read_text(encoding="utf-8", errors="ignore") if project_readme.exists() else f"# {project_name}\n"
+    updated_project_page = replace_managed_gallery_block(
+        existing_project_page,
+        PROJECT_SHOWCASE_START,
+        PROJECT_SHOWCASE_END,
+        page_content,
+        "## Showcase",
+    )
+    project_readme.write_text(updated_project_page, encoding="utf-8")
+    update_project_evidence_index(
+        project_folder,
+        project_root,
+        project_name,
+        copied_screenshots,
+        source_repo_url,
+        source_branch,
+    )
+
+    index_path = roadmap_root / "README.md"
+    index_text = index_path.read_text(encoding="utf-8", errors="ignore")
+    index_entry = build_gallery_index_entry(project_name, project_slug, status, narrative, copied_screenshots, source_repo_url)
+    updated_index = replace_managed_gallery_block(
+        index_text,
+        f"<!-- autodoc:project:{project_slug}:start -->",
+        f"<!-- autodoc:project:{project_slug}:end -->",
+        index_entry,
+        "## Gallery",
+    )
+    index_path.write_text(updated_index, encoding="utf-8")
+    return project_folder, copied_screenshots
+
+
+def commit_and_push_roadmap_update(roadmap_root, project_name):
+    """Commit only the updated gallery index/project folder and push the Roadmap branch."""
+    root = Path(roadmap_root)
+    branch = subprocess.run(["git", "branch", "--show-current"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+    remote = subprocess.run(["git", "remote", "get-url", "origin"], cwd=root, capture_output=True, text=True, check=False)
+    if not branch or remote.returncode:
+        raise ValueError("Roadmap was updated locally but has no current branch or origin remote to push.")
+
+    slug = slugify_project_name(project_name)
+    subprocess.run(["git", "add", "--", "README.md", f"projects/{slug}"], cwd=root, check=True)
+    staged_paths = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=root, capture_output=True, text=True, check=True).stdout.splitlines()
+    allowed_prefix = f"projects/{slug}/"
+    if any(path != "README.md" and not path.startswith(allowed_prefix) for path in staged_paths):
+        raise ValueError("Unexpected staged Roadmap paths detected; refusing to commit or push.")
+    if not staged_paths:
+        return "No Roadmap changes to commit."
+
+    subprocess.run(["git", "commit", "-m", f"Update project gallery: {project_name}"], cwd=root, check=True)
+    subprocess.run(["git", "push", "origin", branch], cwd=root, check=True)
+    return f"Pushed Roadmap gallery update to origin/{branch}."
+
+
+def sync_project_to_roadmap(project_root, project_name, status, narrative, roadmap_dir=None):
+    """Sync one project showcase to the sibling Roadmap gallery and publish only its gallery files."""
+    root = Path(project_root).resolve()
+    target_roadmap = Path(roadmap_dir).resolve() if roadmap_dir else root.parent / "roadmap"
+    if root == target_roadmap:
+        click.echo("Current project is the Roadmap gallery itself; self-sync skipped.")
+        return None
+    if not (target_roadmap / ".git").exists():
+        click.echo(f"Roadmap gallery not found at {target_roadmap}; source project finished locally.")
+        return None
+
+    screenshots = collect_log_linked_screenshots(root)
+    project_gallery = target_roadmap / "projects" / slugify_project_name(project_name) / "screenshots"
+    previously_approved = []
+    new_screenshots = []
+    for item in screenshots:
+        if (project_gallery / Path(item["source"]).name).is_file():
+            previously_approved.append(item)
+        else:
+            new_screenshots.append(item)
+
+    approved_screenshots = list(previously_approved)
+    if new_screenshots:
+        click.echo(f"\nNew log-linked screenshots for {project_name}'s gallery:")
+        for item in new_screenshots:
+            click.echo(f"- {item['caption']} ({item['source'].name}; from {item['log'].name})")
+        if click.confirm("Publish these new images to the Roadmap gallery?", default=False):
+            approved_screenshots.extend(new_screenshots)
+        else:
+            click.echo("New images skipped; previously approved images and the showcase will still update.")
+    elif not screenshots:
+        click.echo(f"No eligible AutoDoc log-linked screenshots found for {project_name}.")
+    else:
+        click.echo("No new screenshots to review; previously approved gallery images will be reverified.")
+
+    try:
+        project_folder, copied_screenshots = update_roadmap_gallery(
+            roadmap_root=target_roadmap,
+            project_root=root,
+            project_name=project_name,
+            status=status,
+            narrative=narrative,
+            approved_screenshots=approved_screenshots,
+        )
+        for item in copied_screenshots:
+            click.echo(f"Screenshot copied and hash-verified: {item['gallery_path']}")
+        click.echo(f"Showcase updated: {project_folder}")
+        result = commit_and_push_roadmap_update(target_roadmap, project_name)
+        click.echo(result)
+        return project_folder
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        click.echo(f"Roadmap update failed; source project work remains saved: {error}", err=True)
+        return None
+
+
 @project.command("complete")
 @click.option("--name", default=None, help="Project name to use in the README and summary.")
 @click.option("--status", default="Complete", show_default=True, help="Project completion status to display.")
 @click.option("--summary", default=None, help="Optional custom project summary to override the AI-generated writeup.")
 @click.option("--format", "output_format", type=click.Choice(["short", "long", "both"], case_sensitive=False), default="both", show_default=True, help="Which project summary format to generate.")
-def project_complete(name, status, summary, output_format):
+@click.option("--skip-roadmap", is_flag=True, help="Do not update the sibling Roadmap showcase for this completion.")
+@click.option("--roadmap-dir", type=click.Path(path_type=Path, file_okay=False), default=None, help="Roadmap repository path (defaults to a sibling ./roadmap directory).")
+def project_complete(name, status, summary, output_format, skip_roadmap, roadmap_dir):
     """Generate a short hiring summary and a longer story-based engineering summary."""
-    project_name = name or Path.cwd().name
     project_root = Path.cwd()
+    project_name = name or get_project_display_name(project_root)
     story = summary or generate_project_completion_story(project_root, project_name, status=status)
     lessons = []
     if "lessons learned" in story.lower():
@@ -1200,6 +1683,12 @@ def project_complete(name, status, summary, output_format):
         click.echo(f"README updated with the short summary and status: {status}")
     elif output_format == "short":
         click.echo(f"README updated with status: {status}")
+
+    target_roadmap = Path(roadmap_dir).resolve() if roadmap_dir else project_root.parent / "roadmap"
+    if skip_roadmap:
+        click.echo("Roadmap showcase update skipped by --skip-roadmap.")
+    else:
+        sync_project_to_roadmap(project_root, project_name, status, story, target_roadmap)
 
 
 @click.group()
@@ -1939,7 +2428,9 @@ def screenshot_command():
         raise click.ClickException(f"Screenshot capture failed: {error}") from error
 
 @click.command()
-def finish():
+@click.option("--skip-roadmap", is_flag=True, help="Do not update the sibling Roadmap gallery for this session.")
+@click.option("--roadmap-dir", type=click.Path(path_type=Path, file_okay=False), default=None, help="Roadmap repository path (defaults to a sibling ./roadmap directory).")
+def finish(skip_roadmap, roadmap_dir):
     """Finish AutoDoc session and log work"""
     session_file = ".autodoc/session.json"
 
@@ -2125,6 +2616,17 @@ Reviewer Notes: {review["notes"]}
     os.remove(session_file)
 
     click.echo("\n✅ Session logged successfully. Handover note saved.")
+    if skip_roadmap:
+        click.echo("Roadmap showcase update skipped by --skip-roadmap.")
+    else:
+        roadmap_narrative = f"{rough_notes.strip()}\n\n{ai_output.strip()}".strip()
+        sync_project_to_roadmap(
+            project_root=Path.cwd(),
+            project_name=get_project_display_name(Path.cwd()),
+            status="In progress",
+            narrative=roadmap_narrative,
+            roadmap_dir=roadmap_dir,
+        )
 
 @click.command()
 def self_test():

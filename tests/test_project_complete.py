@@ -1,9 +1,11 @@
 import tempfile
 import unittest
 from pathlib import Path
+import subprocess
+from unittest.mock import patch
 
 from autodoc import public_cli
-from autodoc.cli import build_project_completion_markdown, generate_assistant_plan, list_log_files, refresh_project_completion_documents, refresh_project_status_file, refresh_readme_after_session, update_project_readme, write_project_completion_documents
+from autodoc.cli import build_gallery_index_entry, build_project_completion_markdown, build_project_showcase, collect_log_linked_screenshots, copy_log_linked_screenshots, extract_log_session_summary, generate_assistant_plan, list_log_files, refresh_project_completion_documents, refresh_project_status_file, refresh_readme_after_session, replace_managed_gallery_block, slugify_project_name, update_project_evidence_index, update_project_readme, update_roadmap_gallery, write_project_completion_documents
 
 
 class ProjectCompletionTests(unittest.TestCase):
@@ -63,7 +65,13 @@ class ProjectCompletionTests(unittest.TestCase):
             (root / "screenshots").mkdir()
             (root / "README.md").write_text("# Demo Project\n\nThis project is in progress.\n", encoding="utf-8")
             (root / "logs" / "2026-10-10.md").write_text("### Summary\nWe built a working prototype.\n", encoding="utf-8")
-            plan = generate_assistant_plan(project_root=root, user_question="What should I do next?", project_name="Demo Project")
+            with patch("autodoc.cli.get_api_key", return_value="test-key"), patch("autodoc.cli.genai.Client") as client_factory:
+                client = client_factory.return_value
+                client.chats.create.return_value.send_message.return_value.text = (
+                    "# Demo Project\n\n## Current status\nA working prototype is documented.\n\n"
+                    "## Next steps\nValidate the prototype with a small test."
+                )
+                plan = generate_assistant_plan(project_root=root, user_question="What should I do next?", project_name="Demo Project")
             self.assertIn("Demo Project", plan)
             self.assertIn("Next steps", plan)
             self.assertIn("prototype", plan.lower())
@@ -222,6 +230,211 @@ class ProjectCompletionTests(unittest.TestCase):
             self.assertIn("## Current status: In progress", status_text)
             self.assertIn("Built the account diagnostics script.", status_text)
             self.assertIn("Test the script on another workstation.", status_text)
+
+    def test_collect_log_linked_screenshots_uses_logs_and_excludes_private_captures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs_dir = root / "logs"
+            screenshots_dir = root / "screenshots"
+            logs_dir.mkdir()
+            screenshots_dir.mkdir()
+            (screenshots_dir / "dns-check.png").write_bytes(b"dns image")
+            (screenshots_dir / "northstar-dns-forward-lookup-zone.png").write_bytes(b"private DNS records")
+            (screenshots_dir / "activity_2026-10-10.jpg").write_bytes(b"private activity")
+            (screenshots_dir / "not-linked.png").write_bytes(b"not in logs")
+            log = logs_dir / "2026-10-10.md"
+            log.write_text(
+                "## Screenshot – DNS check\n![Final DNS health check](../screenshots/dns-check.png)\n"
+                "![DNS zone](../screenshots/northstar-dns-forward-lookup-zone.png)\n"
+                "![Activity](../screenshots/activity_2026-10-10.jpg)\n",
+                encoding="utf-8",
+            )
+
+            found = collect_log_linked_screenshots(root)
+
+            self.assertEqual(len(found), 1)
+            self.assertEqual(found[0]["caption"], "Final DNS health check")
+            self.assertEqual(found[0]["source"], screenshots_dir / "dns-check.png")
+            self.assertEqual(found[0]["log"], log)
+
+    def test_copy_log_linked_screenshots_verifies_transferred_images(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_screenshots = root / "source" / "screenshots"
+            source_screenshots.mkdir(parents=True)
+            source = source_screenshots / "dns-check.png"
+            source.write_bytes(b"verified screenshot bytes")
+            log = root / "source" / "logs" / "2026-10-10.md"
+            log.parent.mkdir()
+            log.write_text("log", encoding="utf-8")
+            gallery = root / "roadmap" / "projects" / "demo-project"
+
+            copied = copy_log_linked_screenshots(
+                root / "source",
+                gallery,
+                [{"source": source, "caption": "DNS check", "log": log}],
+            )
+
+            target = gallery / "screenshots" / source.name
+            self.assertEqual(target.read_bytes(), source.read_bytes())
+            self.assertEqual(copied[0]["gallery_path"], target)
+
+    def test_gallery_markers_update_one_card_and_preserve_other_content(self):
+        text = (
+            "# Gallery\n\n## Project gallery\n\n"
+            "<!-- autodoc:project:other:start -->\nOther card\n<!-- autodoc:project:other:end -->\n"
+        )
+        entry = build_gallery_index_entry(
+            "Demo Project",
+            "demo-project",
+            "Complete",
+            "Built a verified local delivery workflow.",
+            [{"caption": "DNS check", "gallery_path": Path("/tmp/dns.png")}],
+            "https://github.com/example/demo",
+        )
+        marker_start = "<!-- autodoc:project:demo-project:start -->"
+        marker_end = "<!-- autodoc:project:demo-project:end -->"
+
+        updated = replace_managed_gallery_block(text, marker_start, marker_end, entry, "## Project gallery")
+        updated_again = replace_managed_gallery_block(updated, marker_start, marker_end, entry, "## Project gallery")
+
+        self.assertEqual(updated_again.count(marker_start), 1)
+        self.assertIn("Other card", updated_again)
+        self.assertIn("Source repository", updated_again)
+        self.assertIn("projects/demo-project/README.md", updated_again)
+
+    def test_project_showcase_links_source_repo_logs_and_transferred_images(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / "logs"
+            logs.mkdir()
+            (logs / "2026-10-10.md").write_text(
+                "## Session – 12:00 to 12:30\nSummary:\nVerified the DNS health checks.\n",
+                encoding="utf-8",
+            )
+            image = Path(tmp) / "roadmap" / "screenshots" / "dns-check.png"
+            image.parent.mkdir(parents=True)
+            image.write_bytes(b"image")
+
+            showcase = build_project_showcase(
+                root,
+                "Demo Project",
+                "Complete",
+                "Built a small-business lab and verified DNS health.",
+                [{"caption": "Final DNS check", "gallery_path": image, "log": logs / "2026-10-10.md"}],
+                "https://github.com/example/demo",
+                "main",
+            )
+
+            self.assertIn("![Final DNS check](screenshots/dns-check.png)", showcase)
+            self.assertIn("https://github.com/example/demo/blob/main/logs/2026-10-10.md", showcase)
+            self.assertIn("What I built", showcase)
+            self.assertIn("Complete", showcase)
+
+    def test_gallery_session_summary_displays_actual_log_summary_and_outcome(self):
+        body = (
+            "### Goal Achieved\n❌ No\n\n"
+            "Summary:\nThe process-creation event was not reliably visible under the current audit policy.\n\n"
+            "Tasks Completed:\nTested controlled activity.\n"
+        )
+
+        summary = extract_log_session_summary(body)
+
+        self.assertIn("Recorded outcome: ❌ No.", summary)
+        self.assertIn("process-creation event was not reliably visible", summary)
+        self.assertNotIn("Tasks Completed", summary)
+
+    def test_evidence_index_embeds_transferred_images_and_links_source_logs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "CyberOps-Sandbox"
+            source_log = source / "logs" / "2026-10-08.md"
+            source_log.parent.mkdir(parents=True)
+            source_log.write_text("## Screenshot – DNS\n", encoding="utf-8")
+            gallery = root / "roadmap" / "projects" / "cyberops-sandbox"
+            gallery.mkdir(parents=True)
+            image = gallery / "screenshots" / "dns-check.png"
+            image.parent.mkdir()
+            image.write_bytes(b"verified image")
+            (gallery / "evidence-index.md").write_text(
+                "# CyberOps Evidence Index\n\n## Transferred screenshots\n",
+                encoding="utf-8",
+            )
+            screenshots = [{"caption": "Final DNS check", "source": source / "screenshots" / "dns-check.png", "log": source_log, "gallery_path": image}]
+            screenshots[0]["source"].parent.mkdir(parents=True)
+            screenshots[0]["source"].write_bytes(b"verified image")
+
+            index_path = update_project_evidence_index(
+                gallery,
+                source,
+                "CyberOps Sandbox",
+                screenshots,
+                "https://github.com/harkdev1/CyberOps-Sandbox",
+                "main",
+            )
+
+            index_text = index_path.read_text(encoding="utf-8")
+            self.assertIn("![Final DNS check](screenshots/dns-check.png)", index_text)
+            self.assertIn("https://github.com/harkdev1/CyberOps-Sandbox/blob/main/logs/2026-10-08.md", index_text)
+            self.assertEqual(index_text.count("<!-- autodoc:evidence-gallery:start -->"), 1)
+
+    def test_update_roadmap_gallery_copies_log_screenshots_and_links_live_logs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            roadmap_root = root / "roadmap"
+            source_root = root / "CyberOps-Sandbox"
+            (roadmap_root / "projects" / "cyberops-sandbox").mkdir(parents=True)
+            (source_root / "logs").mkdir(parents=True)
+            (source_root / "screenshots").mkdir()
+            (roadmap_root / "README.md").write_text("# Roadmap\n\n## Gallery\n", encoding="utf-8")
+            (roadmap_root / "projects" / "cyberops-sandbox" / "README.md").write_text(
+                "# CyberOps Sandbox\n\n## Showcase\n", encoding="utf-8"
+            )
+            (roadmap_root / "projects" / "cyberops-sandbox" / "evidence-index.md").write_text(
+                "# CyberOps Evidence Index\n\n## Transferred screenshots\n", encoding="utf-8"
+            )
+            screenshot = source_root / "screenshots" / "telemetry-gap.png"
+            screenshot.write_bytes(b"verified image payload")
+            log = source_root / "logs" / "2026-10-08.md"
+            log.write_text(
+                "## Screenshot - Visibility gap\n![Telemetry Visibility Gap](../screenshots/telemetry-gap.png)\n\n"
+                "## Session – 05:19 to 05:30\n### Goal Achieved\n✅ Yes\n\n"
+                "Summary:\nThe process event was not reliably visible in the current audit configuration.\n\n"
+                "Tasks Completed:\nTested process telemetry.\n",
+                encoding="utf-8",
+            )
+
+            for repo in (roadmap_root, source_root):
+                subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo, capture_output=True, check=True)
+                subprocess.run(["git", "config", "user.name", "AutoDoc Tests"], cwd=repo, check=True)
+                subprocess.run(["git", "config", "user.email", "autodoc-tests@example.invalid"], cwd=repo, check=True)
+                subprocess.run(["git", "add", "."], cwd=repo, check=True)
+                subprocess.run(["git", "commit", "-m", "Initial test fixture"], cwd=repo, capture_output=True, check=True)
+            subprocess.run(
+                ["git", "remote", "add", "origin", "https://github.com/example/CyberOps-Sandbox.git"],
+                cwd=source_root,
+                check=True,
+            )
+
+            project_folder, copied = update_roadmap_gallery(
+                roadmap_root=roadmap_root,
+                project_root=source_root,
+                project_name="CyberOps Sandbox",
+                status="In progress",
+                narrative="The homelab is validating real Windows security telemetry.",
+                approved_screenshots=collect_log_linked_screenshots(source_root),
+            )
+
+            page = (project_folder / "README.md").read_text(encoding="utf-8")
+            index = (project_folder / "evidence-index.md").read_text(encoding="utf-8")
+            root_index = (roadmap_root / "README.md").read_text(encoding="utf-8")
+            target = project_folder / "screenshots" / screenshot.name
+            self.assertEqual(target.read_bytes(), screenshot.read_bytes())
+            self.assertIn("Main Homelab", page)
+            self.assertIn("The process event was not reliably visible", page)
+            self.assertIn("https://github.com/example/CyberOps-Sandbox/blob/main/logs/2026-10-08.md", page)
+            self.assertIn("![Telemetry Visibility Gap](screenshots/telemetry-gap.png)", index)
+            self.assertIn("projects/cyberops-sandbox/screenshots/telemetry-gap.png", root_index)
 
     def test_build_project_completion_markdown_prefers_significant_screenshots(self):
         with tempfile.TemporaryDirectory() as tmp:
