@@ -183,6 +183,29 @@ def record_session(date_str, duration_minutes):
     save_stats(stats)
 
 
+def update_project_documentation(project_root, project_name, date_str, session_summary, session_details, latest_session, notes="", where_left_off=""):
+    """Refresh shared project documents after a Public Edition session."""
+    from autodoc.cli import refresh_project_completion_documents, refresh_project_status_file
+
+    refresh_project_status_file(
+        project_root=project_root,
+        project_name=project_name,
+        session_summary=session_summary,
+        status="In progress",
+        date_str=date_str,
+        notes=notes,
+        where_left_off=where_left_off,
+        session_details=session_details,
+    )
+    refresh_project_completion_documents(
+        project_root=project_root,
+        project_name=project_name,
+        status="In progress",
+        narrative=session_summary,
+        latest_session=latest_session,
+    )
+
+
 @click.group()
 def cli():
     """AutoDoc Public Edition: local-first project documentation."""
@@ -268,6 +291,28 @@ def finish():
 """
     log_file = append_log(entry, date_str)
     record_session(date_str, duration)
+    session_summary = f"### Work completed\n{notes or 'No notes recorded.'}\n\n### Session summary\n{session['goal'] or 'No session goal recorded.'}"
+    session_details = "\n\n".join(
+        [
+            f"**Session time:** {date_str}, {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}",
+            f"**Goal:** {session['goal'] or 'Not specified'}",
+            f"**Definition of done:** {session['definition_of_done'] or 'Not specified'}",
+            f"**Blockers:** {session['blockers'] or 'None recorded.'}",
+            f"**Duration:** {duration} minutes (planned: {session['planned_minutes']} minutes)",
+            f"**Next steps:** {next_steps or 'None recorded.'}",
+        ]
+    )
+    latest_session = f"{session_summary}\n\n{session_details}\n\n**Notes:** {notes or 'None.'}\n\n**Handoff:** {next_steps or 'No handoff captured.'}"
+    update_project_documentation(
+        project_root=Path.cwd(),
+        project_name=Path.cwd().name,
+        date_str=date_str,
+        session_summary=session_summary,
+        session_details=session_details,
+        latest_session=latest_session,
+        notes=notes,
+        where_left_off=next_steps,
+    )
     SESSION_FILE.unlink()
     click.echo(f"Session recorded in {log_file}")
 

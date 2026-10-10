@@ -667,34 +667,62 @@ def write_project_completion_documents(project_root=None, project_name=None, sta
     return short_markdown, combined
 
 
-def update_project_readme(project_root=None, project_name=None, narrative="", status="Complete"):
-    """Promote the completed project summary to the top of README.md so it acts as the project landing page."""
+def update_project_readme(project_root=None, project_name=None, narrative="", status="Complete", latest_session=None):
+    """Update the managed README snapshot while preserving the project overview and latest session."""
     root = Path(project_root or Path.cwd())
     project_name = project_name or root.name
     readme_path = root / "README.md"
-    summary = f"""# {project_name}
+    start_marker = "<!-- autodoc:project-snapshot:start -->"
+    end_marker = "<!-- autodoc:project-snapshot:end -->"
+    existing = readme_path.read_text(encoding="utf-8", errors="ignore") if readme_path.exists() else ""
+    title_match = re.match(r"^# .+\n?", existing)
+    title = title_match.group(0).strip() if title_match else f"# {project_name}"
+    body = existing[title_match.end():].strip() if title_match else existing.strip()
+
+    if latest_session is None:
+        latest_match = re.search(
+            r"(?ms)^## Latest session\s*\n(.*?)(?=^" + re.escape(end_marker) + r"\s*$|^---\s*$)",
+            body,
+        )
+        latest_session = latest_match.group(1).strip() if latest_match else ""
+
+    if start_marker in body and end_marker in body:
+        body = re.sub(
+            re.escape(start_marker) + r".*?" + re.escape(end_marker),
+            "",
+            body,
+            count=1,
+            flags=re.S,
+        ).strip()
+    else:
+        body = re.sub(r"(?ms)^## Status:.*?^---\s*$\s*", "", body, count=1).strip()
+        body = re.sub(r"(?m)^Status:.*\n?", "", body, count=1).strip()
+
+    preamble = ""
+    if body.startswith("> **Project status:**"):
+        preamble, _, body = body.partition("\n\n")
+        body = body.strip()
+    if body.startswith(title + "\n"):
+        body = body[len(title):].strip()
+
+    latest_block = f"\n\n## Latest session\n{latest_session.strip()}" if latest_session and latest_session.strip() else ""
+    snapshot = f"""{start_marker}
 
 ## Status: {status}
 
 ## Project summary
-{narrative or 'This project is complete and ready for review.'}
+{narrative or 'This project is in progress and its current work is recorded in the project logs.'}{latest_block}
 
----
-
-"""
-    if not readme_path.exists():
-        readme_path.write_text(summary, encoding="utf-8")
-        return summary
-
-    existing = readme_path.read_text(encoding="utf-8", errors="ignore")
-    if "## Status: " in existing and "## Project summary" in existing:
-        content = existing.split("## Project summary", 1)[1]
-        updated = summary + content.strip() + "\n"
-        readme_path.write_text(updated, encoding="utf-8")
-        return updated
-
-    readme_path.write_text(summary + existing.strip() + "\n", encoding="utf-8")
-    return summary + existing.strip() + "\n"
+{end_marker}"""
+    sections = [title]
+    if preamble:
+        sections.append(preamble)
+    sections.append(snapshot)
+    if body:
+        sections.append(body)
+    updated = "\n\n".join(sections).rstrip() + "\n"
+    readme_path.write_text(updated, encoding="utf-8")
+    return updated
 
 
 def refresh_readme_after_session(project_root=None, project_name=None, session_summary="", status="In progress"):
@@ -728,7 +756,7 @@ def refresh_readme_after_session(project_root=None, project_name=None, session_s
     return updated
 
 
-def refresh_project_status_file(project_root=None, project_name=None, session_summary="", status="In progress", date_str=None, notes="", where_left_off=""):
+def refresh_project_status_file(project_root=None, project_name=None, session_summary="", status="In progress", date_str=None, notes="", where_left_off="", session_details=""):
     """Keep a project-status journal at the repo root so each session contributes to the project's living story."""
     root = Path(project_root or Path.cwd())
     project_name = project_name or root.name
@@ -736,12 +764,16 @@ def refresh_project_status_file(project_root=None, project_name=None, session_su
     summary_text = session_summary.strip() or "No session summary recorded yet."
     today = date_str or datetime.now().strftime("%Y-%m-%d")
 
+    details_text = session_details.strip() or "No additional session details recorded."
     current_entry = f"""## Session – {today}
 
 ### Status: {status}
 
 ### Session summary
 {summary_text}
+
+### Session details
+{details_text}
 
 ### Notes
 {notes.strip() or 'No extra notes recorded.'}
@@ -754,18 +786,24 @@ def refresh_project_status_file(project_root=None, project_name=None, session_su
 """
 
     if not status_path.exists():
-        header = f"# {project_name} Project Status\n\nThis file records the live project journey and is updated after every AutoDoc finish.\n\n"
-        status_path.write_text(header + current_entry, encoding="utf-8")
-        return header + current_entry
-
-    existing = status_path.read_text(encoding="utf-8", errors="ignore").strip()
-    if "## Session – " in existing:
-        existing = re.sub(r"\n?## Session – .*?(?:\n---\n|\Z)", "", existing, flags=re.S)
-
-    if not existing or existing.strip() == "":
-        updated = f"# {project_name} Project Status\n\nThis file records the live project journey and is updated after every AutoDoc finish.\n\n" + current_entry
+        existing = f"# {project_name} Project Status\n\nThis file records the live project journey and is updated after every AutoDoc finish."
     else:
-        updated = existing + "\n" + current_entry
+        existing = status_path.read_text(encoding="utf-8", errors="ignore").strip()
+
+    existing = re.sub(r"(?ms)^## Latest session.*?(?=^## (?!Latest session)\S.*$|^---\s*$|\Z)", "", existing, count=1).strip()
+    existing = re.sub(r"(?m)^## Status:.*\n?", "", existing, count=1).strip()
+    current_status = f"## Current status: {status}"
+    if re.search(r"(?m)^## Current status:.*$", existing):
+        existing = re.sub(r"(?m)^## Current status:.*$", current_status, existing, count=1)
+    else:
+        title_line = re.search(r"(?m)^# .+$", existing)
+        if title_line:
+            insert_at = title_line.end()
+            existing = existing[:insert_at] + "\n\n" + current_status + existing[insert_at:]
+        else:
+            existing = current_status + "\n\n" + existing
+
+    updated = existing.rstrip() + "\n\n" + current_entry
 
     status_path.write_text(updated, encoding="utf-8")
     return updated
@@ -824,7 +862,7 @@ Screenshot captions:
         return fallback
 
 
-def refresh_project_completion_documents(project_root=None, project_name=None, status="In progress", narrative=None):
+def refresh_project_completion_documents(project_root=None, project_name=None, status="In progress", narrative=None, latest_session=None):
     """Refresh the current project snapshot and append the latest story to its history."""
     root = Path(project_root or Path.cwd())
     project_name = project_name or root.name
@@ -846,7 +884,13 @@ def refresh_project_completion_documents(project_root=None, project_name=None, s
         lessons=lessons,
         next_steps=next_steps,
     )
-    update_project_readme(project_root=root, project_name=project_name, narrative=story, status=status)
+    update_project_readme(
+        project_root=root,
+        project_name=project_name,
+        narrative=story,
+        status=status,
+        latest_session=latest_session,
+    )
     return story
 
 
@@ -2020,28 +2064,44 @@ Reviewer Notes: {review["notes"]}
     with open("CHANGELOG.md", "a") as f:
         f.write(f"- {date_str}: {rough_notes}\n")
 
-    # Update stats + README
+    session_summary = f"""### Work completed
+{rough_notes.strip() or 'No rough notes recorded.'}
+
+### AI-reviewed session summary
+{ai_output.strip() or 'No AI summary recorded.'}"""
+    session_details = "\n\n".join(
+        [
+            f"**Session time:** {date_str}, {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}",
+            f"**Goal:** {goal or 'No goal set.'}",
+            f"**Goal achieved:** {'Yes' if goal_achieved and goal_achieved.lower() == 'y' else 'No' if goal_achieved else 'Not applicable; no goal was set.'}",
+            f"**Duration:** {duration_minutes} minutes (planned: {timeboxed_minutes} minutes)",
+            f"**Working story:** {story_context or 'No story emphasis provided.'}",
+            f"**Friction or blockers:** {struggles or 'None reported.'}",
+            f"**AI gaps:** {ai_missed or 'None reported.'}",
+            f"**AI peer review:** {review['status'].title()} by {review['reviewer']} at {review['reviewed_at']}",
+            f"**Reviewer notes:** {review['notes'] or 'None.'}",
+        ]
+    )
+    latest_session = f"{session_summary}\n\n{session_details}\n\n**Notes:** {notes or 'None.'}\n\n**Handoff:** {where_left_off or 'No handoff captured.'}"
+
+    # Update stats and project documentation
     update_stats(date_str, duration_minutes)
     update_readme_dashboard()
-    refresh_readme_after_session(
-        project_root=Path.cwd(),
-        project_name=Path.cwd().name,
-        session_summary=rough_notes.strip() or "Session completed and recorded in the project log.",
-        status="In progress",
-    )
     refresh_project_status_file(
         project_root=Path.cwd(),
         project_name=Path.cwd().name,
-        session_summary=rough_notes.strip() or "Session completed and recorded in the project log.",
+        session_summary=session_summary,
         status="In progress",
         date_str=date_str,
         notes=notes,
         where_left_off=where_left_off,
+        session_details=session_details,
     )
     refresh_project_completion_documents(
         project_root=Path.cwd(),
         project_name=Path.cwd().name,
         status="In progress",
+        latest_session=latest_session,
     )
 
     # Git automation

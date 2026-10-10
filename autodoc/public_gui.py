@@ -457,6 +457,26 @@ class PublicApp(tk.Tk):
             entry = entry.replace("### Notes\n" + (notes or "None"), "### AI Summary\n" + summary + "\n\n### Notes\n" + (notes or "None"))
             log_file = public_cli.append_log(entry, date_str)
             public_cli.record_session(date_str, duration)
+            session_summary = f"### Work completed\n{notes or 'No notes recorded.'}\n\n### AI-generated session summary\n{summary}"
+            session_details = "\n\n".join(
+                [
+                    f"**Session time:** {date_str}, {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}",
+                    f"**Goal:** {session['goal'] or 'Not specified'}",
+                    f"**Definition of done:** {session['definition_of_done'] or 'Not specified'}",
+                    f"**Duration:** {duration} minutes (planned: {session['planned_minutes']} minutes)",
+                    f"**AI summary:** {summary}",
+                ]
+            )
+            latest_session = f"{session_summary}\n\n{session_details}\n\n**Notes:** {notes or 'None.'}\n\n**Handoff:** No handoff was captured in this session."
+            public_cli.update_project_documentation(
+                project_root=Path.cwd(),
+                project_name=Path.cwd().name,
+                date_str=date_str,
+                session_summary=session_summary,
+                session_details=session_details,
+                latest_session=latest_session,
+                notes=notes,
+            )
             public_cli.SESSION_FILE.unlink()
             self.update_timer()
             messagebox.showinfo("Session saved", f"Markdown log written to {log_file}")

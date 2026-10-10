@@ -3,9 +3,9 @@
 This folder contains the distribution materials for the safe, local-first desktop edition of AutoDoc.
 
 The public application uses the GUI entry point at `../autodoc/public_gui.py` and
-the shared local storage helpers at `../autodoc/public_cli.py`.
-It does not use the developer CLI, does not require a Gemini API key, and does not
-touch `.autodoc/` state or perform automatic Git staging.
+the shared local storage helpers at `../autodoc/public_cli.py`. It does not invoke
+developer CLI commands, require a Gemini API key, touch `.autodoc/` state, or
+perform automatic Git staging.
 
 ## Download
 
@@ -31,7 +31,7 @@ Your existing developer AutoDoc state is not used.
 ## What Each Area Does
 
 - **Project Hub**: See project activity, open or create projects, review today's focus, and sync to GitHub after review.
-- **Focus Session**: Start a timer-based work session, capture optional screenshots, and finish it into a Markdown log.
+- **Focus Session**: Start a timer-based work session, capture optional screenshots, and finish it into a Markdown log, the current project-status journal, README latest-session section, and short/long project summaries.
 - **Work Shift**: Keep a date-based daily journal with planned, completed, and saved-for-tomorrow items.
 - **Manual Log**: Record one piece of work without starting a session or timer.
 - **Logs**: Read every local Markdown log inside the app.

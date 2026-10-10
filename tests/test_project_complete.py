@@ -2,7 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from autodoc.cli import build_project_completion_markdown, generate_assistant_plan, list_log_files, refresh_project_completion_documents, refresh_project_status_file, refresh_readme_after_session, write_project_completion_documents
+from autodoc import public_cli
+from autodoc.cli import build_project_completion_markdown, generate_assistant_plan, list_log_files, refresh_project_completion_documents, refresh_project_status_file, refresh_readme_after_session, update_project_readme, write_project_completion_documents
 
 
 class ProjectCompletionTests(unittest.TestCase):
@@ -98,6 +99,7 @@ class ProjectCompletionTests(unittest.TestCase):
                 status="In progress",
                 date_str="2026-10-10",
                 notes="Need the release checklist before shutdown.",
+                session_details="**Goal:** Validate the API integration.\n\n**Duration:** 45 minutes.",
             )
 
             self.assertIn("## Status: In progress", refreshed)
@@ -105,6 +107,121 @@ class ProjectCompletionTests(unittest.TestCase):
             self.assertIn("Finished the API integration", refreshed)
             self.assertIn("Existing project history stays below", refreshed)
             self.assertIn("2026-10-10", refreshed)
+            self.assertIn("**Goal:** Validate the API integration.", refreshed)
+            self.assertIn("**Duration:** 45 minutes.", refreshed)
+
+    def test_refresh_project_status_file_keeps_prior_sessions_and_updates_current_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            first = refresh_project_status_file(
+                project_root=root,
+                project_name="Original Project",
+                session_summary="Configured the initial workstation policy.",
+                status="In progress",
+                date_str="2026-10-09",
+            )
+            refreshed = refresh_project_status_file(
+                project_root=root,
+                project_name="Original Project",
+                session_summary="Validated the PowerShell diagnostics script.",
+                status="In progress",
+                date_str="2026-10-10",
+            )
+
+            self.assertIn("Configured the initial workstation policy.", refreshed)
+            self.assertIn("Validated the PowerShell diagnostics script.", refreshed)
+            self.assertIn("2026-10-09", refreshed)
+            self.assertIn("2026-10-10", refreshed)
+            self.assertIn("Current status: In progress", refreshed)
+
+    def test_refresh_project_status_file_migrates_legacy_status_heading(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            status_path = root / "project-status.md"
+            status_path.write_text(
+                "# Original Project Status\n\n"
+                "## Status: In progress\n\n"
+                "## Latest session\nOld generic placeholder.\n\n"
+                "## Notes\nKeep the project journal.\n\n---\n",
+                encoding="utf-8",
+            )
+
+            refreshed = refresh_project_status_file(
+                project_root=root,
+                project_name="Original Project",
+                session_summary="Recorded the latest project work.",
+                status="In progress",
+                date_str="2026-10-10",
+            )
+
+            self.assertEqual(refreshed.count("## Current status: In progress"), 1)
+            self.assertNotIn("\n## Status: In progress\n", refreshed)
+            self.assertNotIn("Old generic placeholder", refreshed)
+            self.assertIn("Keep the project journal.", refreshed)
+
+    def test_project_readme_keeps_latest_session_details_with_project_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            readme_path = root / "README.md"
+            readme_path.write_text(
+                "# Demo Project\n\n"
+                "> **Project status:** See [project-status.md](project-status.md).\n\n"
+                "## About\nExisting project details stay below the generated summary.\n",
+                encoding="utf-8",
+            )
+            session_details = "**Goal:** Validate the telemetry pipeline.\n\n**Duration:** 45 minutes."
+
+            refresh_project_completion_documents(
+                project_root=root,
+                project_name="Demo Project",
+                status="In progress",
+                narrative="The project is validating its telemetry pipeline.",
+                latest_session=session_details,
+            )
+
+            readme_text = readme_path.read_text(encoding="utf-8")
+            self.assertIn("## Status: In progress", readme_text)
+            self.assertIn("The project is validating its telemetry pipeline.", readme_text)
+            self.assertIn("## Latest session", readme_text)
+            self.assertIn("**Goal:** Validate the telemetry pipeline.", readme_text)
+            self.assertIn("**Duration:** 45 minutes.", readme_text)
+            self.assertIn("[project-status.md](project-status.md)", readme_text)
+            self.assertIn("Existing project details stay below the generated summary.", readme_text)
+
+            update_project_readme(
+                project_root=root,
+                project_name="Demo Project",
+                narrative="The project is complete after telemetry validation.",
+                status="Complete",
+            )
+            completed_readme = readme_path.read_text(encoding="utf-8")
+            self.assertIn("## Status: Complete", completed_readme)
+            self.assertIn("**Goal:** Validate the telemetry pipeline.", completed_readme)
+            self.assertEqual(completed_readme.count("## Latest session"), 1)
+
+    def test_public_finish_documentation_refresh_updates_readme_and_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Public Demo\n\nProject details.\n", encoding="utf-8")
+            public_cli.update_project_documentation(
+                project_root=root,
+                project_name="Public Demo",
+                date_str="2026-10-10",
+                session_summary="### Work completed\nBuilt the account diagnostics script.",
+                session_details="**Goal:** Validate account diagnostics.\n\n**Duration:** 30 minutes.",
+                latest_session="**Goal:** Validate account diagnostics.\n\n**Duration:** 30 minutes.",
+                notes="The script ran successfully.",
+                where_left_off="Test the script on another workstation.",
+            )
+
+            readme_text = (root / "README.md").read_text(encoding="utf-8")
+            status_text = (root / "project-status.md").read_text(encoding="utf-8")
+            self.assertIn("## Latest session", readme_text)
+            self.assertIn("**Goal:** Validate account diagnostics.", readme_text)
+            self.assertIn("## Current status: In progress", status_text)
+            self.assertIn("Built the account diagnostics script.", status_text)
+            self.assertIn("Test the script on another workstation.", status_text)
 
     def test_build_project_completion_markdown_prefers_significant_screenshots(self):
         with tempfile.TemporaryDirectory() as tmp:

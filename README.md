@@ -2,6 +2,13 @@
 
 > **Project status:** See [project-status.md](project-status.md) for the live status and journey, or the [short](docs/project-complete-short.md) and [long](docs/project-complete-long.md) project summaries.
 
+## Status: In progress
+
+## Latest session – 2026-10-10
+Today's work improved AutoDoc's project-documentation workflow. `finish` now records the latest session details in the README and project-status journal, refreshes the short project snapshot, and appends the long-form history. The README keeps its project summary and status links when those sections update. Project-status updates retain prior sessions. Screenshot summaries prefer significant evidence and explain what each selected image shows.
+
+The project-completion regression tests cover history retention and README session-detail persistence. The three project READMEs and status journals are being standardized around the same current-status and latest-session model.
+
 AutoDoc is an AI-assisted engineering workflow for turning daily technical work into structured, reviewable project documentation.
 
 It helps you:
