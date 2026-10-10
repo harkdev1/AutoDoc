@@ -771,8 +771,8 @@ def refresh_project_status_file(project_root=None, project_name=None, session_su
     return updated
 
 
-def generate_project_completion_story(project_root=None, project_name=None):
-    """Use the project logs and screenshot captions to draft the milestone summary without requiring a full internal architecture change."""
+def generate_project_completion_story(project_root=None, project_name=None, status="Complete"):
+    """Use project logs and screenshot captions to draft a stage-aware summary."""
     root = Path(project_root or Path.cwd())
     project_name = project_name or root.name
     log_text = ""
@@ -794,9 +794,10 @@ def generate_project_completion_story(project_root=None, project_name=None):
         prompt = f"""
 You are a senior product storyteller for technical projects.
 
-Write a concise completion summary for the project named '{project_name}'.
+Write a concise project summary for '{project_name}', whose current status is '{status}'.
 Use the project's logs and screenshot captions as evidence.
 The audience includes curious employers and technical peers who want a quick understanding of what was built, what changed, and what we learned.
+Describe the work as ongoing when the status is not complete; do not imply unfinished work is complete.
 
 Return a polished markdown summary with these headings:
 1. Project story
@@ -813,15 +814,40 @@ Screenshot captions:
 """
         chat = client.chats.create(model="gemini-2.5-flash")
         response = chat.send_message(prompt)
-        return response.text.strip() or "This project is complete and ready for review."
+        return response.text.strip() or f"{project_name} is currently {status.lower()}."
     except Exception:
         fallback = (
-            f"{project_name} was completed as a focused delivery effort with clear milestones, validation checkpoints, "
-            "and evidence captured in the project logs and screenshots. "
-            "The work centered on building a practical workflow, documenting the engineering process, and making the project easy to review. "
-            "The biggest lessons were to keep documentation close to delivery, record concrete proof as work progresses, and make handoff notes explicit for the next phase."
+            f"{project_name} is currently {status.lower()}, with progress and evidence captured in the project logs and screenshots. "
+            "The work centers on delivering practical outcomes, documenting the engineering process, and making progress easy to review. "
+            "Key lessons include keeping documentation close to delivery, recording proof as work progresses, and making handoff notes explicit."
         )
         return fallback
+
+
+def refresh_project_completion_documents(project_root=None, project_name=None, status="In progress", narrative=None):
+    """Refresh the current project snapshot and append the latest story to its history."""
+    root = Path(project_root or Path.cwd())
+    project_name = project_name or root.name
+    story = narrative or generate_project_completion_story(root, project_name, status=status)
+    lessons = [
+        "Keep documentation close to delivery.",
+        "Use screenshots as proof points.",
+        "Write the project story in plain language for future reviewers.",
+    ]
+    next_steps = [
+        "Continue from the handoff notes and current project status.",
+        "Capture final cleanup or deployment follow-up items as they are completed.",
+    ]
+    write_project_completion_documents(
+        project_root=root,
+        project_name=project_name,
+        status=status,
+        narrative=story,
+        lessons=lessons,
+        next_steps=next_steps,
+    )
+    update_project_readme(project_root=root, project_name=project_name, narrative=story, status=status)
+    return story
 
 
 def open_log_for_editing(path):
@@ -1085,7 +1111,7 @@ def project_complete(name, status, summary, output_format):
     """Generate a short hiring summary and a longer story-based engineering summary."""
     project_name = name or Path.cwd().name
     project_root = Path.cwd()
-    story = summary or generate_project_completion_story(project_root, project_name)
+    story = summary or generate_project_completion_story(project_root, project_name, status=status)
     lessons = []
     if "lessons learned" in story.lower():
         lessons = [
@@ -2011,6 +2037,11 @@ Reviewer Notes: {review["notes"]}
         date_str=date_str,
         notes=notes,
         where_left_off=where_left_off,
+    )
+    refresh_project_completion_documents(
+        project_root=Path.cwd(),
+        project_name=Path.cwd().name,
+        status="In progress",
     )
 
     # Git automation

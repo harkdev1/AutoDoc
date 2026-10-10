@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from autodoc.cli import build_project_completion_markdown, generate_assistant_plan, list_log_files, refresh_project_status_file, refresh_readme_after_session, write_project_completion_documents
+from autodoc.cli import build_project_completion_markdown, generate_assistant_plan, list_log_files, refresh_project_completion_documents, refresh_project_status_file, refresh_readme_after_session, write_project_completion_documents
 
 
 class ProjectCompletionTests(unittest.TestCase):
@@ -157,6 +157,34 @@ class ProjectCompletionTests(unittest.TestCase):
             long_text = long_path.read_text(encoding="utf-8")
             self.assertIn("Current sprint focus is securing the telemetry pipeline", long_text)
             self.assertIn("old long", long_text)
+
+    def test_refresh_project_completion_documents_updates_current_snapshot_and_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            docs = root / "docs"
+            docs.mkdir()
+            short_path = docs / "project-complete-short.md"
+            long_path = docs / "project-complete-long.md"
+            short_path.write_text("# Old snapshot\n", encoding="utf-8")
+            long_path.write_text("# Earlier milestone\n\nPrior work remains documented.\n", encoding="utf-8")
+            (root / "README.md").write_text("# Demo Project\n\nExisting details.\n", encoding="utf-8")
+
+            refresh_project_completion_documents(
+                project_root=root,
+                project_name="Demo Project",
+                status="In progress",
+                narrative="The current milestone validates telemetry visibility.",
+            )
+
+            short_text = short_path.read_text(encoding="utf-8")
+            long_text = long_path.read_text(encoding="utf-8")
+            readme_text = (root / "README.md").read_text(encoding="utf-8")
+            self.assertIn("Status: In progress", short_text)
+            self.assertIn("The current milestone validates telemetry visibility.", short_text)
+            self.assertNotIn("Old snapshot", short_text)
+            self.assertIn("Earlier milestone", long_text)
+            self.assertIn("The current milestone validates telemetry visibility.", long_text)
+            self.assertIn("## Status: In progress", readme_text)
 
     def test_build_project_completion_markdown_long_form_includes_timeline_and_trials(self):
         with tempfile.TemporaryDirectory() as tmp:
